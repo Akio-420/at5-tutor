@@ -50,16 +50,34 @@ const conf = n => store.get("conf"+n, -1);
 function navDots(){ QUESTIONS.forEach(q => { const d=$(`#dot${q.n}`); if(!d) return; const c=conf(q.n); d.className="dot"+(c===2?" done":c===1?" mid":""); }); }
 
 // ---------- speech ----------
-function speak(text){
-  if(!("speechSynthesis" in window)){ toast("Read-aloud isn't supported in this browser"); return; }
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text.replace(/[“”"]/g,""));
-  u.lang="en-AU"; u.rate=0.95;
-  const v = speechSynthesis.getVoices().find(v=>/en-(AU|GB)/.test(v.lang));
-  if(v) u.voice=v;
-  speechSynthesis.speak(u);
+function speak(text){ Voice.play(Voice.sentences(text), {onError: toast}); }
+const stopSpeak = () => Voice.stop();
+
+// Classmate defaults to a different voice from the narrator
+function classmateVoice(){ if(Voice.settings.voice2) return Voice.settings.voice2; const vs=Voice.voices(); const main=Voice.settings.voice || (vs[0]&&vs[0].name); const other=vs.find(v=>v.name!==main); return other ? other.name : main; }
+// Voice settings bar (voice, classmate voice, speed) — shared by every page that reads aloud
+function voiceBar(withClassmate){
+  const opts = sel => Voice.voices().map(v=>`<option value="${esc(v.name)}" ${v.name===sel?"selected":""}>${esc(v.name)} (${esc(v.lang)})</option>`).join("") || `<option value="">Default voice</option>`;
+  return `<div class="vbar noprint">
+    <label>Voice <select data-vset="voice">${opts(Voice.settings.voice)}</select></label>
+    ${withClassmate?`<label>Classmate voice <select data-vset="voice2">${opts(classmateVoice())}</select></label>`:""}
+    <label>Speed <select data-vset="rate">${[0.75,0.85,0.95,1,1.1,1.25].map(r=>`<option value="${r}" ${+Voice.settings.rate===r?"selected":""}>${r}×</option>`).join("")}</select></label>
+    <button class="btn small" data-vtest>Test</button>
+  </div>`;
 }
-const stopSpeak = () => { if("speechSynthesis" in window) speechSynthesis.cancel(); };
+function bindVoiceBar(root){
+  $$("[data-vset]", root).forEach(s => s.onchange = () => Voice.setSetting(s.dataset.vset, s.dataset.vset==="rate" ? +s.value : s.value));
+  $$("[data-vtest]", root).forEach(b => b.onclick = () => Voice.play(["This is how your answers will sound."], {onError: toast}));
+}
+// Renders text as clickable sentences; returns a highlighter
+function sentenceView(el, text, {hideWords=false, onPick}={}){
+  const parts = Voice.sentences(text);
+  el.innerHTML = parts.map((s,i)=>`<span class="sent" data-i="${i}">${hideWords ? s.split(/(\s+)/).map((w,j)=> /\s+/.test(w)?w : ((j/2)%3===2 && w.length>2 ? `<span class="w hide">${esc(w)}</span>` : esc(w))).join("") : esc(s)}</span>`).join(" ");
+  $$(".w.hide", el).forEach(w => w.onclick = ev => { ev.stopPropagation(); w.classList.remove("hide"); });
+  if(onPick) $$(".sent", el).forEach(s => s.onclick = () => onPick(+s.dataset.i));
+  return { parts, mark(i, cls="on"){ $$(".sent", el).forEach(s => s.classList.toggle(cls, +s.dataset.i===i)); if(i>=0){ const s=$(`.sent[data-i="${i}"]`, el); s && s.scrollIntoView({block:"nearest", behavior:"smooth"}); } }, clear(){ $$(".sent", el).forEach(s=>s.classList.remove("on","turn")); } };
+}
+Voice.onVoices(() => { $$(".vbar").forEach(bar => { const holder=bar.parentNode; const withC=!!$("[data-vset=voice2]",bar); const tmp=document.createElement("div"); tmp.innerHTML=voiceBar(withC); holder.replaceChild(tmp.firstElementChild, bar); bindVoiceBar(holder); }); });
 
 // ---------- timers ----------
 let activeTimer = null;
@@ -113,7 +131,7 @@ routes.home = () => {
   <div class="card">
     <ol style="margin:0;padding-left:20px">
       <li><b>Work one question at a time.</b> Read the word-by-word breakdown first, then the model answer and the evidence.</li>
-      <li><b>Say it out loud</b> on the <a href="#speak">Speak</a> page with the 45–75 second timer, and record yourself.</li>
+      <li><b>Say it out loud</b> on <a href="#speak">Voice practice</a>: live transcript and instant feedback, replying to a classmate's challenge, and shadowing the model answers.</li>
       <li><b>Prepare for push-back</b>: every question has replies for when another student disagrees.</li>
       <li><b>Drill the unseen questions</b> with the 1-minute prep timer, like the real thing.</li>
       <li><b>Lock in facts</b> with <a href="#flash">Flashcards</a> and the <a href="#quiz">Quiz</a>.</li>
@@ -186,14 +204,17 @@ routes.q = (parts) => {
     <ol><li><b>Position</b> — one sentence that answers the exact question.</li><li><b>Evidence 1</b> — with the source said out loud.</li><li><b>Evidence 2</b> — from the other case study.</li><li><b>Explain why</b> — link evidence back to your position.</li><li><b>Limit / other view</b> — "However…" then return to your view.</li></ol>
   </div>
   <div id="tab1" hidden>
+    ${voiceBar(false)}
     <div class="row noprint">
-      <button class="btn primary" id="listen">▶ Listen</button><button class="btn" id="stop">■ Stop</button>
+      <button class="btn primary" id="listen">▶ Listen</button><button class="btn" id="pause">❚❚ Pause</button><button class="btn" id="stop">■ Stop</button>
+      <button class="btn" id="shadow">🗣 Shadow</button>
       <button class="btn" id="memory">Memory mode</button>
       <a class="btn" href="#speak-${n}">Practise with timer</a>
       <span class="note">${words} words · about ${Math.round(words/2.4)} sec spoken</span>
     </div>
-    <div class="card"><div class="spoken" id="spoken">${esc(q.spoken)}</div></div>
-    <p class="note">Memory mode hides every third word. Tap a hidden word to reveal it. Don't memorise word-for-word — learn the structure and the evidence so it sounds natural.</p>
+    <div class="turnbanner" id="turn" hidden>Your turn — repeat that sentence</div>
+    <div class="card"><div class="spoken" id="spoken"></div></div>
+    <p class="note"><b>Listen</b> highlights each sentence as it's read — tap any sentence to start from there. <b>Shadow</b> pauses after each sentence so you can repeat it out loud. <b>Memory mode</b> hides every third word (tap to reveal). Learn the structure and evidence, not every word, so it sounds natural.</p>
   </div>
   <div id="tab2" hidden>
     <p class="note">Rwanda evidence first, then Ukraine. Aim to use at least one from each.</p>
@@ -230,16 +251,25 @@ routes.q.after = (parts, params, main) => {
     stopSpeak();
   });
   $$("[data-conf]", main).forEach(b => b.onclick = () => { store.set("conf"+n, +b.dataset.conf); go(); });
-  $("#listen", main).onclick = () => speak(q.spoken);
-  $("#stop", main).onclick = stopSpeak;
-  let mem=false;
-  $("#memory", main).onclick = (ev) => {
-    mem=!mem; ev.target.classList.toggle("primary", mem);
-    const sp=$("#spoken", main);
-    if(!mem){ sp.textContent=q.spoken; return; }
-    sp.innerHTML = q.spoken.split(/(\s+)/).map((w,i)=> /\s+/.test(w)?w : ((i/2)%3===2 && w.length>2 ? `<span class="w hide">${esc(w)}</span>` : esc(w))).join("");
-    $$(".w.hide", sp).forEach(s=>s.onclick=()=>s.classList.remove("hide"));
+  bindVoiceBar(main);
+  let mem=false, view;
+  const turn=$("#turn", main);
+  const run = (start=0, shadow=false) => {
+    turn.hidden=true;
+    Voice.play(view.parts, { start,
+      onSentence: i => { turn.hidden=true; view.clear(); view.mark(i); },
+      gap: shadow ? (s => Math.max(1800, s.split(/\s+/).length*420/Voice.settings.rate)) : null,
+      onGap: i => { view.mark(i,"turn"); turn.hidden=false; },
+      onEnd: () => { view.clear(); turn.hidden=true; $("#pause",main).textContent="❚❚ Pause"; },
+      onError: toast });
   };
+  const render = () => { view = sentenceView($("#spoken", main), q.spoken, {hideWords:mem, onPick: i => run(i, false)}); };
+  render();
+  $("#listen", main).onclick = () => run(0,false);
+  $("#shadow", main).onclick = () => run(0,true);
+  $("#pause", main).onclick = (ev) => { if(!Voice.isPlaying()) return; if(Voice.isPaused()){ Voice.resume(); ev.target.textContent="❚❚ Pause"; } else { Voice.pause(); ev.target.textContent="▶ Resume"; } };
+  $("#stop", main).onclick = () => { Voice.stop(); view.clear(); turn.hidden=true; };
+  $("#memory", main).onclick = (ev) => { mem=!mem; ev.target.classList.toggle("primary", mem); Voice.stop(); render(); };
   $$("[data-plan]", main).forEach(t => t.oninput = () => store.set(`plan${n}_${t.dataset.plan}`, t.value));
   $("#readmine", main).onclick = () => { const txt=$$("[data-plan]",main).map(t=>t.value).join(" "); txt.trim()?speak(txt):toast("Write something first"); };
   $("#mya4", main).oninput = e => store.set("a4_"+n, e.target.value);
@@ -274,81 +304,272 @@ routes.evidence.after = (parts, params, main) => {
   if(f){ const el=$("#ev-"+f); if(el){ el.scrollIntoView({block:"center"}); el.style.outline="3px solid var(--accent)"; } }
 };
 
-// ---------- SPEAK ----------
-let rec=null, recStream=null;
-function stopRec(){ try{ if(rec && rec.state!=="inactive") rec.stop(); }catch(e){} if(recStream){ recStream.getTracks().forEach(t=>t.stop()); recStream=null; } }
+// ---------- SPEAK (voice practice) ----------
+const S = { rec:null, recorder:null, meterRaf:0, sessionAudio:{} };
+function stopRec(){
+  if(S.rec){ S.rec.stop(); S.rec=null; }
+  if(S.recorder){ S.recorder.stop(); S.recorder=null; }
+  cancelAnimationFrame(S.meterRaf);
+}
+const fmtT = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+function micNote(){
+  const missing=[]; if(!Voice.hasSR) missing.push("live transcript"); if(!Voice.hasRec) missing.push("recording");
+  return missing.length ? `<div class="trap noprint"><b>Heads-up:</b> ${missing.join(" and ")} isn't available in this browser. Chrome or Safari opened directly (e.g. your GitHub Pages link) works best. You can still tap the transcript box and use your keyboard's 🎤 dictation, then press <b>Check my answer</b>.</div>` : "";
+}
+function allQuestionOptions(sel){
+  return QUESTIONS.map(q=>`<option value="${q.n}" ${String(q.n)===sel?"selected":""}>Q${q.n}: ${esc(q.q)}</option>`).join("") +
+    UNSEEN.map((u,i)=>`<option value="u${i}" ${sel==="u"+i?"selected":""}>Unseen: ${esc(u.q)}</option>`).join("");
+}
+function questionFor(v){ if(String(v)[0]==="u"){ const u=UNSEEN[+String(v).slice(1)]; return {id:"u"+String(v).slice(1), q:u.q, model:"Suggested angle: "+u.angle}; } const q=QUESTIONS.find(x=>x.n===+v); return {id:String(q.n), q:q.q, model:q.spoken}; }
+function feedbackHTML(r, model, modelLabel){
+  return `<div class="fb">
+    <div class="row" style="justify-content:space-between"><div><div class="note">Score</div><div class="score ${r.score>=80?"good":r.score>=55?"mid":"low"}">${r.score}%</div></div>
+    <div class="note" style="text-align:right">${r.words} words · ${Math.round(r.secs)} sec${r.wpm?` · ${r.wpm} wpm`:""}</div></div>
+    ${r.checks.map(c=>`<div class="chk ${c.ok?"ok":"no"}"><span>${c.ok?"✓":"✗"}</span><div><b>${esc(c.label)}</b>${c.ok?"":`<div class="note">${esc(c.tip)}</div>`}</div></div>`).join("")}
+    <p class="note">Automatic checks look for key words in your transcript, so names like "Iskoujina" may be misheard — fix the transcript and press Check again.</p>
+    <details><summary><b>${modelLabel}</b></summary><div class="spoken" style="margin-top:8px">${esc(model)}</div></details>
+  </div>`;
+}
+// Starts transcript + recorder + level meter. Returns a stopper that resolves to {text, audio}.
+async function startCapture(main, {transcript=true, record=true}){
+  const ta=$(".tx", main), interim=$(".interim", main), meter=$(".meter span", main), note=$(".capnote", main);
+  ta.value=""; ta.readOnly=false; interim.textContent=""; note.textContent="";
+  if(transcript && Voice.hasSR){
+    S.rec = Voice.Recognizer((fin, inter) => { ta.value=fin; interim.textContent=inter; ta.scrollTop=ta.scrollHeight; },
+      st => { if(st==="blocked"||st==="network") ta.readOnly=false; if(st==="blocked") note.textContent="Live transcript blocked — allow the microphone, or dictate into the box after."; if(st==="network") note.textContent="Live transcript needs an internet connection."; });
+    if(S.rec.start()) ta.readOnly=true;   // locked only while live transcript is writing
+  }
+  if(record && Voice.hasRec){
+    try{ S.recorder = Voice.Recorder(); await S.recorder.start();
+      const tick=()=>{ if(!S.recorder) return; meter.style.width=Math.round(S.recorder.level()*100)+"%"; S.meterRaf=requestAnimationFrame(tick); }; tick();
+    }catch(e){ S.recorder=null; note.textContent = (note.textContent?note.textContent+" ":"") + "Recording blocked — allow microphone access to record."; }
+  }
+  return async () => {
+    const rec=S.rec, recorder=S.recorder; S.rec=null; S.recorder=null; cancelAnimationFrame(S.meterRaf); meter.style.width="0";
+    if(rec) rec.stop();
+    const audio = recorder ? await recorder.stop() : null;
+    await new Promise(r=>setTimeout(r,400)); // let the last words arrive
+    ta.readOnly=false; if(interim.textContent){ ta.value=(ta.value+" "+interim.textContent).trim(); interim.textContent=""; }
+    return {text: ta.value, audio};
+  };
+}
+const captureBox = () => `
+  <div class="meter" title="Microphone level"><span></span></div>
+  <label class="f">Transcript <span class="note">(live if supported — you can edit it, or dictate/type into it)</span></label>
+  <textarea class="tx" style="min-height:110px" placeholder="Your words appear here as you speak…"></textarea>
+  <div class="interim note"></div><div class="capnote note"></div>`;
+
 routes.speak = (parts, params) => {
   const sel = params.get("q") || "1";
   return `
-  <h1>Speaking practice</h1>
-  <p class="lead">Like the real discussion: optional 1-minute prep, then speak for 45–75 seconds. Record yourself and check against the rubric.</p>
-  <div class="card">
-    <label class="f">Question</label>
-    <select id="sq">
-      ${QUESTIONS.map(q=>`<option value="${q.n}" ${String(q.n)===sel?"selected":""}>Q${q.n}: ${esc(q.q)}</option>`).join("")}
-      ${UNSEEN.map((u,i)=>`<option value="u${i}" ${sel==="u"+i?"selected":""}>Unseen: ${esc(u.q)}</option>`).join("")}
-    </select>
-    <div class="row" style="margin-top:10px">
-      <label class="check" style="margin:0"><input type="checkbox" id="prep" checked> 1-minute prep first</label>
-      <button class="btn small" id="rand">🎲 Random question</button>
+  <h1>Voice practice</h1>
+  <p class="lead">Speak your answers, get instant feedback, practise replying to classmates, and shadow the model answers.</p>
+  <div class="tabs" id="vtabs">${["🎙 Answer a question","💬 Respond to a classmate","🗣 Shadowing","📈 My attempts"].map((t,i)=>`<button data-vt="${i}" class="${i===0?"on":""}">${t}</button>`).join("")}</div>
+  ${voiceBar(true)}
+  ${micNote()}
+
+  <div id="vt0">
+    <div class="card">
+      <label class="f">Question</label>
+      <select id="sq">${allQuestionOptions(sel)}</select>
+      <div class="row" style="margin-top:10px">
+        <label class="check" style="margin:0"><input type="checkbox" id="prep" checked> 1-minute prep</label>
+        <label class="check" style="margin:0"><input type="checkbox" id="optTx" ${Voice.hasSR?"checked":"disabled"}> Live transcript</label>
+        <label class="check" style="margin:0"><input type="checkbox" id="optRec" ${Voice.hasRec?"checked":"disabled"}> Record audio</label>
+        <button class="btn small" id="rand">🎲 Random</button>
+        <button class="btn small" id="hearQ">🔊 Hear question</button>
+      </div>
+      <div class="qtext" id="sqtext" style="margin-top:14px"></div>
+      <div class="timer" id="clock">0:00</div>
+      <div class="bar"><span id="cbar" style="width:0"></span></div>
+      <div class="note" id="cstate" style="text-align:center;margin-top:6px">Press Start. Speak for 45–75 seconds.</div>
+      <div class="row" style="justify-content:center;margin-top:12px">
+        <button class="btn primary" id="start">Start</button>
+        <button class="btn good" id="finish">■ Stop & check</button>
+      </div>
+      ${captureBox()}
+      <div class="row" style="margin-top:8px"><button class="btn" id="checkBtn">Check my answer</button><span class="note">Uses the transcript above.</span></div>
+      <audio id="playback" controls style="width:100%;margin-top:12px;display:none"></audio>
     </div>
-    <div class="qtext" id="sqtext" style="margin-top:14px"></div>
-    <div class="timer" id="clock">0:00</div>
-    <div class="bar"><span id="cbar" style="width:0"></span></div>
-    <div class="note" id="cstate" style="text-align:center;margin-top:6px">Press Start</div>
-    <div class="row" style="justify-content:center;margin-top:12px">
-      <button class="btn primary" id="start">Start</button>
-      <button class="btn" id="stopT">Stop</button>
-      <button class="btn" id="recBtn">● Record</button>
-    </div>
-    <audio id="playback" controls style="width:100%;margin-top:12px;display:none"></audio>
-    <div class="note" id="recnote" style="text-align:center"></div>
+    <details class="card"><summary><b>Plan notes (for your 1-minute prep)</b></summary>
+      ${["Position","Rwanda evidence + source","Ukraine evidence + source","However…"].map(l=>`<label class="f">${l}</label><textarea class="sp"></textarea>`).join("")}
+    </details>
+    <div id="fb0"></div>
   </div>
-  <div class="cols">
-    <div class="card"><h3 style="margin-top:0">Plan (during prep)</h3>
-      ${["Position","Rwanda evidence","Ukraine evidence","Why / limit"].map(l=>`<label class="f">${l}</label><textarea class="sp"></textarea>`).join("")}
+
+  <div id="vt1" hidden>
+    <div class="card">
+      <p class="note" style="margin-top:0">A classmate challenges your view. <b>Listen first</b> (the text is hidden — listening is marked), then reply in 20–45 seconds: acknowledge their point, give evidence, and return to your view.</p>
+      <div class="note" id="rcontext"></div>
+      <div class="classmate" id="rsay"><span class="note">Press "Play challenge".</span></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" id="rplay">🎧 Play challenge</button>
+        <button class="btn" id="rshow">Show text</button>
+        <button class="btn" id="rnext">Next challenge →</button>
+        <label class="check" style="margin:0"><input type="checkbox" id="rauto" checked> Start my reply automatically</label>
+      </div>
+      <div class="timer" id="rclock">0:00</div>
+      <div class="note" id="rstate" style="text-align:center">—</div>
+      <div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" id="rstart">Start reply</button><button class="btn good" id="rstop">■ Stop & check</button></div>
+      ${captureBox()}
+      <div class="row" style="margin-top:8px"><button class="btn" id="rcheck">Check my reply</button></div>
+      <audio id="rplayback" controls style="width:100%;margin-top:12px;display:none"></audio>
     </div>
-    <div class="card"><h3 style="margin-top:0">Self-check after speaking</h3>
-      ${["I answered the EXACT question (key words)","Clear position in my first sentence","Rwanda evidence + source said out loud","Ukraine evidence + source said out loud","Explained WHY, not just described","Mentioned a limit or another view","Between 45 and 75 seconds","Sounded natural, not read out"].map(l=>`<label class="check"><input type="checkbox"> ${l}</label>`).join("")}
-      <div class="row" style="margin-top:8px"><button class="btn small" id="showModel">Show model answer / angle</button></div>
-      <div id="model" class="spoken" style="margin-top:8px"></div>
+    <div id="fb1"></div>
+  </div>
+
+  <div id="vt2" hidden>
+    <div class="card">
+      <p class="note" style="margin-top:0">Shadowing: the model answer is read one sentence at a time, then pauses so you can repeat it out loud. Great for natural rhythm and remembering citations.</p>
+      <label class="f">Model answer</label>
+      <select id="shq">${QUESTIONS.map(q=>`<option value="${q.n}" ${String(q.n)===sel?"selected":""}>Q${q.n}: ${esc(q.q)}</option>`).join("")}</select>
+      <div class="row" style="margin-top:10px">
+        <label>Pause length <select id="shgap" style="width:auto"><option value="1">Normal</option><option value="1.5" selected>Longer</option><option value="2">Longest</option></select></label>
+        <label class="check" style="margin:0"><input type="checkbox" id="shhide"> Hide text (harder)</label>
+      </div>
+      <div class="row" style="margin-top:10px"><button class="btn primary" id="shstart">▶ Start</button><button class="btn" id="shpause">❚❚ Pause</button><button class="btn" id="shrepeat">↺ Repeat sentence</button><button class="btn" id="shstop">■ Stop</button><span class="note" id="shpos"></span></div>
+      <div class="turnbanner" id="shturn" hidden>Your turn — say it</div>
+      <div class="spoken" id="shtext" style="margin-top:10px"></div>
     </div>
-  </div>`;
+  </div>
+
+  <div id="vt3" hidden><div id="attempts"></div></div>`;
 };
+
 routes.speak.after = (parts, params, main) => {
-  const getQ = () => { const v=$("#sq").value; if(v[0]==="u"){ const u=UNSEEN[+v.slice(1)]; return {q:u.q, model:"Angle: "+u.angle}; } const q=QUESTIONS.find(x=>x.n===+v); return {q:q.q, model:q.spoken}; };
-  const showQ = () => { $("#sqtext").textContent=getQ().q; $("#model").textContent=""; };
+  bindVoiceBar(main);
+  // tabs
+  $$("#vtabs button", main).forEach(b => b.onclick = () => {
+    stopRec(); clearTimer(); Voice.stop();
+    $$("#vtabs button", main).forEach(x=>x.classList.toggle("on", x===b));
+    for(let i=0;i<4;i++) $("#vt"+i, main).hidden = (i != b.dataset.vt);
+    if(b.dataset.vt==="3") drawAttempts();
+  });
+
+  // ===== Answer a question =====
+  const box0=$("#vt0", main);
+  const showQ = () => { $("#sqtext").textContent=questionFor($("#sq").value).q; $("#fb0").innerHTML=""; };
   $("#sq").onchange = showQ; showQ();
-  $("#rand").onclick = () => { const opts=$$("#sq option"); $("#sq").value = opts[Math.floor(Math.random()*opts.length)].value; showQ(); };
-  $("#showModel").onclick = () => { $("#model").textContent = getQ().model; };
+  $("#rand").onclick = () => { const o=$$("#sq option"); $("#sq").value=o[Math.floor(Math.random()*o.length)].value; showQ(); };
+  $("#hearQ").onclick = () => speak(questionFor($("#sq").value).q);
   const clock=$("#clock"), bar=$("#cbar"), st=$("#cstate");
-  const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
-  function talk(){
-    clearTimer(); let t=0; const t0=Date.now();
-    clock.className="timer talk"; st.textContent="Speak now — aim for 45–75 seconds";
-    activeTimer=setInterval(()=>{ t=(Date.now()-t0)/1000; clock.textContent=fmt(t); bar.style.width=Math.min(100,t/75*100)+"%";
-      if(t>=45 && t<75) st.textContent="✓ In the target range — wrap up when ready";
-      if(t>=75){ clock.className="timer over"; st.textContent="Over 75 seconds — finish your sentence"; } },200);
-  }
+  let stopper=null, t0=0, secs=0, lastAudio=null;
+  const talk = async () => {
+    clearTimer(); clock.className="timer talk"; st.textContent="Speak now — aim for 45–75 seconds";
+    stopper = await startCapture(box0, {transcript:$("#optTx").checked, record:$("#optRec").checked});
+    t0=Date.now();
+    activeTimer=setInterval(()=>{ secs=(Date.now()-t0)/1000; clock.textContent=fmtT(secs); bar.style.width=Math.min(100,secs/75*100)+"%";
+      if(secs>=45 && secs<75) st.textContent="✓ In the target range — finish your point";
+      if(secs>=75){ clock.className="timer over"; st.textContent="Over 75 seconds — wrap up now"; }
+      if(secs>=150) finish(); },200);
+  };
   $("#start").onclick = () => {
-    clearTimer();
+    stopRec(); clearTimer(); Voice.stop(); $("#fb0").innerHTML=""; secs=0;
     if($("#prep").checked){
-      let left=60; const t0=Date.now(); clock.className="timer prep"; st.textContent="Prep time — plan position + 2 pieces of evidence";
-      activeTimer=setInterval(()=>{ left=60-(Date.now()-t0)/1000; clock.textContent=fmt(Math.max(0,Math.ceil(left))); bar.style.width=(100-left/60*100)+"%"; if(left<=0){ talk(); } },200);
+      const p0=Date.now(); clock.className="timer prep"; st.textContent="Prep — position + one Rwanda + one Ukraine fact";
+      activeTimer=setInterval(()=>{ const left=60-(Date.now()-p0)/1000; clock.textContent=fmtT(Math.max(0,Math.ceil(left))); bar.style.width=(100-Math.max(0,left)/60*100)+"%"; if(left<=0){ clearTimer(); talk(); } },200);
     } else talk();
   };
-  $("#stopT").onclick = () => { clearTimer(); st.textContent="Stopped. Use the self-check."; stopRec(); };
-  $("#recBtn").onclick = async () => {
-    if(rec && rec.state==="recording"){ stopRec(); return; }
-    if(!navigator.mediaDevices || !window.MediaRecorder){ $("#recnote").textContent="Recording isn't available here — try Chrome or Safari, or use your phone's voice memo."; return; }
-    try{
-      recStream = await navigator.mediaDevices.getUserMedia({audio:true});
-      const chunks=[]; rec = new MediaRecorder(recStream);
-      rec.ondataavailable = e => chunks.push(e.data);
-      rec.onstop = () => { const a=$("#playback"); if(!a) return; a.src=URL.createObjectURL(new Blob(chunks,{type:rec.mimeType||"audio/webm"})); a.style.display="block"; $("#recBtn").textContent="● Record"; $("#recnote").textContent="Listen back: did you cite your sources out loud?"; if(recStream){recStream.getTracks().forEach(t=>t.stop()); recStream=null;} };
-      rec.start(); $("#recBtn").textContent="■ Stop recording"; $("#recnote").textContent="Recording…";
-    }catch(e){ $("#recnote").textContent="Microphone blocked. Allow mic access in your browser settings, or use a voice memo app."; }
+  const finish = async () => {
+    clearTimer();
+    if(!stopper){ st.textContent="Stopped."; return; }
+    const s=stopper; stopper=null; st.textContent="Checking…";
+    const {text, audio} = await s();
+    if(audio){ const a=$("#playback"); a.src=audio.url; a.style.display="block"; lastAudio=audio; }
+    st.textContent="Done — see your feedback below.";
+    check(text, secs, true);
   };
+  $("#finish").onclick = finish;
+  const check = (text, s, save) => {
+    const Q=questionFor($("#sq").value);
+    if(!text.trim()){ $("#fb0").innerHTML=`<div class="trap">No words captured. Type or dictate what you said into the transcript box, then press <b>Check my answer</b>.</div>`; return; }
+    const r=Voice.analyse(text, s>=8 ? s : text.split(/\s+/).length/2.4, Q.q, "answer");
+    $("#fb0").innerHTML = feedbackHTML(r, Q.model, String(Q.id)[0]==="u" ? "Suggested angle" : "Compare with the model answer");
+    if(save && text!==S.lastSaved){ S.lastSaved=text; const id=Date.now(); Voice.saveAttempt({id, at:new Date().toISOString(), mode:"answer", q:Q.id, secs:Math.round(r.secs), wpm:r.wpm, score:r.score, text:text.slice(0,800)}); if(lastAudio) S.sessionAudio[id]=lastAudio; }
+    $("#fb0").scrollIntoView({behavior:"smooth", block:"start"});
+  };
+  $("#checkBtn").onclick = () => check($(".tx", box0).value, secs, true);
+
+  // ===== Respond to a classmate =====
+  const box1=$("#vt1", main);
+  const pool = QUESTIONS.flatMap(q => q.counters.map(([say, reply]) => ({n:q.n, q:q.q, say:say.replace(/^"|"$/g,"").replace(/^“|”$/g,"").replace(/\s*\(p\.[^)]*\)\s*$/,""), reply})));
+  let order=shuffle(pool.map((_,i)=>i)), ri=0, rStopper=null, rSecs=0, rAudio=null;
+  const cur = () => pool[order[ri]];
+  const drawR = () => { const c=cur(); $("#rcontext").textContent=`From Q${c.n}: ${c.q}`; $("#rsay").innerHTML=`<span class="note">Text hidden — press Play challenge.</span>`; $("#rsay").dataset.shown=""; $("#rclock").textContent="0:00"; $("#rclock").className="timer"; $("#rstate").textContent="—"; $("#fb1").innerHTML=""; $(".tx",box1).value=""; };
+  drawR();
+  $("#rshow").onclick = () => { $("#rsay").textContent = "Classmate: " + cur().say; };
+  $("#rnext").onclick = () => { stopRec(); clearTimer(); Voice.stop(); rStopper=null; ri=(ri+1)%order.length; drawR(); };
+  const rTalk = async () => {
+    clearTimer(); $("#rclock").className="timer talk"; $("#rstate").textContent="Reply now: acknowledge → evidence → your view";
+    rStopper = await startCapture(box1, {transcript:true, record:true});
+    const s0=Date.now();
+    activeTimer=setInterval(()=>{ rSecs=(Date.now()-s0)/1000; $("#rclock").textContent=fmtT(rSecs); if(rSecs>=45){ $("#rclock").className="timer over"; $("#rstate").textContent="Wrap up — replies should be short"; } if(rSecs>=90) rFinish(); },200);
+  };
+  $("#rplay").onclick = () => {
+    stopRec(); clearTimer(); rStopper=null; $("#fb1").innerHTML="";
+    $("#rstate").textContent="Listening…";
+    Voice.play(Voice.sentences(cur().say), { voiceName: classmateVoice(), onError: toast,
+      onEnd: () => {
+        if(!$("#rauto").checked){ $("#rstate").textContent="Press Start reply when ready"; return; }
+        let n=3; $("#rclock").className="timer prep"; $("#rclock").textContent=n; $("#rstate").textContent="Your turn in…";
+        activeTimer=setInterval(()=>{ n--; if(n>0) $("#rclock").textContent=n; else { clearTimer(); rTalk(); } },1000);
+      } });
+  };
+  $("#rstart").onclick = () => { stopRec(); Voice.stop(); rTalk(); };
+  const rFinish = async () => {
+    clearTimer(); if(!rStopper){ $("#rstate").textContent="Stopped."; return; }
+    const s=rStopper; rStopper=null; $("#rstate").textContent="Checking…";
+    const {text, audio} = await s();
+    if(audio){ const a=$("#rplayback"); a.src=audio.url; a.style.display="block"; rAudio=audio; }
+    $("#rstate").textContent="Done.";
+    rCheck(text, rSecs, true);
+  };
+  $("#rstop").onclick = rFinish;
+  const rCheck = (text, s, save) => {
+    const c=cur();
+    if(!text.trim()){ $("#fb1").innerHTML=`<div class="trap">No words captured. Type or dictate your reply into the transcript box, then press <b>Check my reply</b>.</div>`; return; }
+    const r=Voice.analyse(text, s>=8 ? s : text.split(/\s+/).length/2.4, c.q, "respond");
+    $("#fb1").innerHTML = `<div class="classmate" style="margin:12px 0">Classmate: ${esc(c.say)}</div>` + feedbackHTML(r, c.reply, "A strong reply");
+    if(save && text!==S.lastSaved){ S.lastSaved=text; const id=Date.now(); Voice.saveAttempt({id, at:new Date().toISOString(), mode:"respond", q:String(c.n), secs:Math.round(r.secs), wpm:r.wpm, score:r.score, text:text.slice(0,800)}); if(rAudio) S.sessionAudio[id]=rAudio; }
+  };
+  $("#rcheck").onclick = () => rCheck($(".tx",box1).value, rSecs, true);
+
+  // ===== Shadowing =====
+  let shView, shIdx=0;
+  const drawSh = () => { const q=QUESTIONS.find(x=>x.n===+$("#shq").value); shView=sentenceView($("#shtext"), q.spoken, {onPick:i=>runSh(i)}); $("#shtext").classList.toggle("blur", $("#shhide").checked); $("#shpos").textContent=`${shView.parts.length} sentences`; $("#shturn").hidden=true; };
+  const runSh = (start=0) => {
+    const mult=+$("#shgap").value;
+    Voice.play(shView.parts, { start,
+      onSentence: i => { shIdx=i; $("#shturn").hidden=true; shView.clear(); shView.mark(i); $("#shpos").textContent=`Sentence ${i+1} / ${shView.parts.length}`; },
+      gap: s => Math.max(1800, s.split(/\s+/).length*420*mult/Voice.settings.rate),
+      onGap: i => { shView.mark(i,"turn"); $("#shturn").hidden=false; },
+      onEnd: () => { $("#shturn").hidden=true; shView.clear(); $("#shpos").textContent="Finished — try with 'Hide text' on."; },
+      onError: toast });
+  };
+  $("#shq").onchange = () => { Voice.stop(); drawSh(); };
+  $("#shhide").onchange = () => $("#shtext").classList.toggle("blur", $("#shhide").checked);
+  $("#shstart").onclick = () => runSh(0);
+  $("#shrepeat").onclick = () => runSh(shIdx);
+  $("#shpause").onclick = (ev) => { if(!Voice.isPlaying()) return; if(Voice.isPaused()){ Voice.resume(); ev.target.textContent="❚❚ Pause"; } else { Voice.pause(); ev.target.textContent="▶ Resume"; } };
+  $("#shstop").onclick = () => { Voice.stop(); shView.clear(); $("#shturn").hidden=true; };
+  drawSh();
+
+  // ===== Attempts =====
+  function drawAttempts(){
+    const list=Voice.attempts();
+    const label = a => a.q[0]==="u" ? "Unseen: "+(UNSEEN[+a.q.slice(1)]||{q:"?"}).q : "Q"+a.q+" · "+SHORT[+a.q-1];
+    const best={}; list.filter(a=>a.mode==="answer").forEach(a=>{ best[a.q]=Math.max(best[a.q]||0,a.score); });
+    $("#attempts").innerHTML = list.length ? `
+      <div class="card"><h3 style="margin-top:0">Best score per question</h3>
+        <div class="grid">${QUESTIONS.map(q=>`<div class="tile"><div class="k">Q${q.n}</div><div class="t">${best[String(q.n)]!==undefined?best[String(q.n)]+"%":"—"}</div></div>`).join("")}</div></div>
+      <div class="card"><h3 style="margin-top:0">History</h3>
+        <table><tr><th>When</th><th>What</th><th>Length</th><th>Pace</th><th>Score</th></tr>
+        ${list.map(a=>`<tr><td>${new Date(a.at).toLocaleString("en-AU",{weekday:"short",hour:"numeric",minute:"2-digit"})}</td><td>${a.mode==="respond"?"Reply · ":""}${esc(label(a))}${S.sessionAudio[a.id]?`<br><audio controls src="${S.sessionAudio[a.id].url}" style="width:100%;max-width:260px"></audio>`:""}<details><summary class="note">Transcript</summary><div class="note">${esc(a.text)}</div></details></td><td>${a.secs}s</td><td>${a.wpm||"—"}</td><td><b>${a.score}%</b></td></tr>`).join("")}
+        </table>
+        <p class="note">Scores and transcripts are saved in this browser. Audio is kept only until you close the page.</p>
+        <button class="btn small" id="clearAtt">Clear history</button></div>` : `<div class="card">No attempts yet. Use <b>Answer a question</b> or <b>Respond to a classmate</b> and press Stop & check.</div>`;
+    const c=$("#clearAtt"); if(c) c.onclick=()=>{ Voice.clearAttempts(); drawAttempts(); toast("History cleared"); };
+  }
 };
 
 // ---------- UNSEEN DRILL ----------
