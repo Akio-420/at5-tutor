@@ -70,17 +70,23 @@ const routes = {};
 function go(){
   stopSpeak(); clearTimer(); stopRec();
   const rs = $("#results"); if(rs){ rs.classList.remove("show"); const si=$("#search"); if(si) si.value=""; }
-  const h =location.hash.replace(/^#\/?/,"") || "";
-  const [path, query] = h.split("?");
-  const parts = path.split("/").filter(Boolean);
-  const params = new URLSearchParams(query||"");
-  const key = parts[0] || "home";
+  // Plain hashes only (e.g. #q-3, #speak-u2, #evidence-R25, #flash-nums) so the page works on GitHub Pages and claude.ai
+  const h = location.hash.replace(/^#\/?/,"") || "home";
+  const dash = h.indexOf("-");
+  const key = dash>0 ? h.slice(0,dash) : h;
+  const arg = dash>0 ? h.slice(dash+1) : "";
+  const params = new URLSearchParams();
+  const parts = [];
+  if(key==="q") parts.push(arg);
+  if(key==="speak" && arg) params.set("q", arg);
+  if(key==="evidence" && arg) params.set("focus", arg);
+  if(key==="flash" && arg) params.set("deck", arg);
   const fn = routes[key] || routes.home;
   const main = $("#view");
-  main.innerHTML = fn(parts.slice(1), params) || "";
-  if(fn.after) fn.after(parts.slice(1), params, main);
+  main.innerHTML = fn(parts, params) || "";
+  if(fn.after) fn.after(parts, params, main);
   bindCopy(main);
-  $$("nav.side a").forEach(a => a.classList.toggle("active", a.getAttribute("href") === "#/"+path || (path==="" && a.getAttribute("href")==="#/")));
+  $$("nav.side a").forEach(a => { const href=a.getAttribute("href"); a.classList.toggle("active", href==="#"+h || href==="#"+key); });
   $("nav.side").classList.remove("open");
   navDots();
   if(!params.get("focus")) window.scrollTo(0,0);
@@ -107,16 +113,16 @@ routes.home = () => {
   <div class="card">
     <ol style="margin:0;padding-left:20px">
       <li><b>Work one question at a time.</b> Read the word-by-word breakdown first, then the model answer and the evidence.</li>
-      <li><b>Say it out loud</b> on the <a href="#/speak">Speak</a> page with the 45–75 second timer, and record yourself.</li>
+      <li><b>Say it out loud</b> on the <a href="#speak">Speak</a> page with the 45–75 second timer, and record yourself.</li>
       <li><b>Prepare for push-back</b>: every question has replies for when another student disagrees.</li>
       <li><b>Drill the unseen questions</b> with the 1-minute prep timer, like the real thing.</li>
-      <li><b>Lock in facts</b> with <a href="#/flash">Flashcards</a> and the <a href="#/quiz">Quiz</a>.</li>
-      <li><b>Build and print your A4 sheet</b> on the <a href="#/a4">A4 sheet</a> page.</li>
+      <li><b>Lock in facts</b> with <a href="#flash">Flashcards</a> and the <a href="#quiz">Quiz</a>.</li>
+      <li><b>Build and print your A4 sheet</b> on the <a href="#a4">A4 sheet</a> page.</li>
     </ol>
   </div>
 
   <h2>The 8 questions</h2>
-  <div class="grid">${QUESTIONS.map(q=>`<a class="tile" href="#/q/${q.n}"><div class="k">Question ${q.n} · ${CONF[conf(q.n)]||"Not started"}</div><div class="t">${esc(q.q)}</div></a>`).join("")}</div>
+  <div class="grid">${QUESTIONS.map(q=>`<a class="tile" href="#q-${q.n}"><div class="k">Question ${q.n} · ${CONF[conf(q.n)]||"Not started"}</div><div class="t">${esc(q.q)}</div></a>`).join("")}</div>
 
   <h2>Teacher's rules (from the Week 13 slides)</h2>
   <div class="card">
@@ -183,7 +189,7 @@ routes.q = (parts) => {
     <div class="row noprint">
       <button class="btn primary" id="listen">▶ Listen</button><button class="btn" id="stop">■ Stop</button>
       <button class="btn" id="memory">Memory mode</button>
-      <a class="btn" href="#/speak?q=${n}">Practise with timer</a>
+      <a class="btn" href="#speak-${n}">Practise with timer</a>
       <span class="note">${words} words · about ${Math.round(words/2.4)} sec spoken</span>
     </div>
     <div class="card"><div class="spoken" id="spoken">${esc(q.spoken)}</div></div>
@@ -192,7 +198,7 @@ routes.q = (parts) => {
   <div id="tab2" hidden>
     <p class="note">Rwanda evidence first, then Ukraine. Aim to use at least one from each.</p>
     ${q.evidence.map(id=>EVI[id]).filter(Boolean).sort((a,b)=>caseOf(a)==="RW"?-1:caseOf(b)==="RW"?1:0).map(e=>evCard(e)).join("")}
-    <a class="btn" href="#/evidence">Open full evidence bank →</a>
+    <a class="btn" href="#evidence">Open full evidence bank →</a>
   </div>
   <div id="tab3" hidden>
     <p class="note">What another student might say, and how you can respond while keeping your view.</p>
@@ -201,18 +207,18 @@ routes.q = (parts) => {
   <div id="tab4" hidden>
     <p class="note">Write your own version in your own words. It saves on this device and appears on your A4 sheet.</p>
     ${["Position","Rwanda evidence (+ source)","Ukraine evidence (+ source)","Why — link back","Limit / other view"].map((l,i)=>`<label class="f">${l}</label><textarea data-plan="${i}">${esc(store.get(`plan${n}_${i}`,""))}</textarea>`).join("")}
-    <div class="row" style="margin-top:10px"><button class="btn primary" id="readmine">▶ Read mine aloud</button><a class="btn" href="#/speak?q=${n}">Practise with timer</a></div>
+    <div class="row" style="margin-top:10px"><button class="btn primary" id="readmine">▶ Read mine aloud</button><a class="btn" href="#speak-${n}">Practise with timer</a></div>
   </div>
   <div id="tab5" hidden>
     <h3>Suggested A4 line</h3>
     <div class="a4line">${esc(q.a4)}</div>
     <label class="f">Your A4 line (edit freely; used on the A4 sheet page)</label>
     <textarea id="mya4" style="min-height:110px">${esc(store.get("a4_"+n, q.a4))}</textarea>
-    <div class="row" style="margin-top:8px"><button class="btn" id="reseta4">Reset to suggested</button><a class="btn" href="#/a4">Open A4 sheet →</a></div>
+    <div class="row" style="margin-top:8px"><button class="btn" id="reseta4">Reset to suggested</button><a class="btn" href="#a4">Open A4 sheet →</a></div>
   </div>
   <div class="row noprint" style="margin-top:24px;justify-content:space-between">
-    ${n>1?`<a class="btn" href="#/q/${n-1}">← Q${n-1}</a>`:"<span></span>"}
-    ${n<8?`<a class="btn primary" href="#/q/${n+1}">Q${n+1} →</a>`:`<a class="btn primary" href="#/unseen">Unseen drill →</a>`}
+    ${n>1?`<a class="btn" href="#q-${n-1}">← Q${n-1}</a>`:"<span></span>"}
+    ${n<8?`<a class="btn primary" href="#q-${n+1}">Q${n+1} →</a>`:`<a class="btn primary" href="#unseen">Unseen drill →</a>`}
   </div>`;
 };
 routes.q.after = (parts, params, main) => {
@@ -356,7 +362,7 @@ routes.unseen = () => `
     <div class="row" style="justify-content:center">
       <button class="btn primary" id="ustart">Start 1-minute prep</button>
       <button class="btn" id="unext">Next question</button>
-      <a class="btn" id="uspeak" href="#/speak">Speak it with timer →</a>
+      <a class="btn" id="uspeak" href="#speak">Speak it with timer →</a>
     </div>
   </div>
   <div class="card">
@@ -371,7 +377,7 @@ routes.unseen = () => `
   ${UNSEEN.map((u,i)=>`<div class="ev"><b>${esc(u.q)}</b><details><summary class="note">Suggested angle</summary><div style="margin-top:6px">${esc(u.angle)}</div></details></div>`).join("")}`;
 routes.unseen.after = (parts, params, main) => {
   let order=shuffle(UNSEEN.map((_,i)=>i)), idx=0;
-  const show=()=>{ clearTimer(); const u=UNSEEN[order[idx]]; $("#uq").textContent=u.q; $("#uclock").textContent="1:00"; $("#uclock").className="timer prep"; $("#uans").style.display="none"; $("#up1").value=""; $("#up2").value=""; $("#uspeak").href="#/speak?q=u"+order[idx]; };
+  const show=()=>{ clearTimer(); const u=UNSEEN[order[idx]]; $("#uq").textContent=u.q; $("#uclock").textContent="1:00"; $("#uclock").className="timer prep"; $("#uans").style.display="none"; $("#up1").value=""; $("#up2").value=""; $("#uspeak").href="#speak-u"+order[idx]; };
   show();
   $("#unext").onclick=()=>{ idx=(idx+1)%order.length; show(); };
   $("#uangle").onclick=()=>{ $("#uans").textContent=UNSEEN[order[idx]].angle; $("#uans").style.display="block"; };
@@ -394,7 +400,7 @@ routes.flash = (parts, params) => {
   return `
   <h1>Flashcards</h1>
   <p class="lead">Tap the card to flip it. Mark the ones you know — they're skipped when "Hide known" is on.</p>
-  <div class="row noprint">${Object.entries(d).map(([key,v])=>`<a class="btn ${key===k?"primary":""}" href="#/flash?deck=${key}">${v.name} (${v.cards.length})</a>`).join("")}</div>
+  <div class="row noprint">${Object.entries(d).map(([key,v])=>`<a class="btn ${key===k?"primary":""}" href="#flash-${key}">${v.name} (${v.cards.length})</a>`).join("")}</div>
   <div class="row" style="margin-top:10px"><label class="check" style="margin:0"><input type="checkbox" id="hideKnown" ${store.get("hideKnown",false)?"checked":""}> Hide known</label><button class="btn small" id="fshuffle">Shuffle</button><span class="note" id="fpos"></span></div>
   <div class="flash" id="card"><div class="inner"><div class="face front" id="ffront"></div><div class="face back" id="fback"></div></div></div>
   <div class="row" style="justify-content:center">
@@ -504,7 +510,8 @@ routes.a4 = () => `
   <div class="noprint">
     <h1>A4 note sheet</h1>
     <p class="lead">Built from your A4 lines (edit them on each question's "A4 line" tab). Press Print and choose "Fit to page" to get one A4 sheet. Check your teacher's rules on what the sheet can include.</p>
-    <div class="row"><button class="btn primary" onclick="window.print()">🖨 Print / save as PDF</button></div>
+    <div class="row"><button class="btn primary" id="a4print">🖨 Print / save as PDF</button><button class="btn" id="a4copy">Copy all as text</button></div>
+    <p class="note">If Print doesn't open (some in-app viewers block it), use "Copy all as text" and paste it into a document.</p>
   </div>
   <div class="card a4print" style="margin-top:14px">
     <h1>AT5 notes — Rwanda & Ukraine</h1>
@@ -517,11 +524,16 @@ routes.a4 = () => `
     <div class="a4line">In my view… | Building on [name]'s point… | I see your point, but… | Similarly in Ukraine / Whereas in Rwanda… | What do you think, [name]? | According to … page …</div>
   </div>`;
 
+routes.a4.after = (parts, params, main) => {
+  $("#a4print", main).onclick = () => { try{ window.print(); }catch(e){ toast("Print is blocked here — use Copy"); } };
+  $("#a4copy", main).onclick = () => copy($$(".a4print h1, .a4print h3, .a4print .a4line", main).map(el=>el.innerText).join("\n"));
+};
+
 // ---------- SOURCES ----------
 routes.sources = () => `
   <h1>Sources & how to cite them out loud</h1>
   <p class="lead">Academic attribution is marked. Name the author or organisation, the year, and the page for Rwanda.</p>
-  ${Object.entries(SOURCES).map(([k,s])=>`<div class="ev"><div class="meta"><span class="pill ${s.case}">${caseLabel[s.case]}</span><b>${esc(s.short)}</b></div><div>${esc(s.full)}</div><div class="cite">Say it: <i>${esc(k==="R"?"According to the chapter 'Genocide in Rwanda', page 250, …":s.oral+" …")}</i></div><div class="row" style="margin-top:6px"><a class="btn small" href="#/evidence">See facts from this source</a></div></div>`).join("")}
+  ${Object.entries(SOURCES).map(([k,s])=>`<div class="ev"><div class="meta"><span class="pill ${s.case}">${caseLabel[s.case]}</span><b>${esc(s.short)}</b></div><div>${esc(s.full)}</div><div class="cite">Say it: <i>${esc(k==="R"?"According to the chapter 'Genocide in Rwanda', page 250, …":s.oral+" …")}</i></div><div class="row" style="margin-top:6px"><a class="btn small" href="#evidence">See facts from this source</a></div></div>`).join("")}
   <div class="card"><h3 style="margin-top:0">Corrections to old notes</h3>
   <ul style="margin:0;padding-left:20px">
     <li>The name "RTLM" is <b>not</b> in your reading — say "the CDR's radio station" (p. 250).</li>
@@ -533,11 +545,11 @@ routes.sources = () => `
 // ---------- SEARCH ----------
 function buildIndex(){
   const idx=[];
-  QUESTIONS.forEach(q=>idx.push({type:"Question "+q.n, title:q.q, text:[q.q,q.position,q.spoken,q.trap,q.counters.flat().join(" ")].join(" "), href:"#/q/"+q.n}));
-  EVIDENCE.forEach(e=>idx.push({type:`Evidence · ${caseLabel[caseOf(e)]} · ${citeShort(e)}`, title:e.fact, text:e.fact+" "+(e.quote||"")+" "+(e.date||""), href:"#/evidence?focus="+e.id}));
-  TERMS.forEach(([f,b])=>idx.push({type:"Key term", title:f+" — "+b, text:f+" "+b, href:"#/flash?deck=terms"}));
-  BIAS.forEach(b=>idx.push({type:"Bias type", title:b.name+" — "+b.ex, text:b.name+" "+b.def+" "+b.ex, href:"#/bias"}));
-  UNSEEN.forEach(u=>idx.push({type:"Unseen question", title:u.q, text:u.q+" "+u.angle, href:"#/unseen"}));
+  QUESTIONS.forEach(q=>idx.push({type:"Question "+q.n, title:q.q, text:[q.q,q.position,q.spoken,q.trap,q.counters.flat().join(" ")].join(" "), href:"#q-"+q.n}));
+  EVIDENCE.forEach(e=>idx.push({type:`Evidence · ${caseLabel[caseOf(e)]} · ${citeShort(e)}`, title:e.fact, text:e.fact+" "+(e.quote||"")+" "+(e.date||""), href:"#evidence-"+e.id}));
+  TERMS.forEach(([f,b])=>idx.push({type:"Key term", title:f+" — "+b, text:f+" "+b, href:"#flash-terms"}));
+  BIAS.forEach(b=>idx.push({type:"Bias type", title:b.name+" — "+b.ex, text:b.name+" "+b.def+" "+b.ex, href:"#bias"}));
+  UNSEEN.forEach(u=>idx.push({type:"Unseen question", title:u.q, text:u.q+" "+u.angle, href:"#unseen"}));
   return idx;
 }
 const STOP=new Set("the a an of to in and or is was were what how why who do does did for on at by with that this it be are as from about can".split(" "));
@@ -550,7 +562,7 @@ function search(qs, idx){
 
 // ---------- init ----------
 document.addEventListener("DOMContentLoaded", () => {
-  $("#qnav").innerHTML = QUESTIONS.map(q=>`<a href="#/q/${q.n}"><span class="dot" id="dot${q.n}"></span>Q${q.n} · ${esc(SHORT[q.n-1])}</a>`).join("");
+  $("#qnav").innerHTML = QUESTIONS.map(q=>`<a href="#q-${q.n}"><span class="dot" id="dot${q.n}"></span>Q${q.n} · ${esc(SHORT[q.n-1])}</a>`).join("");
   $(".menu-btn").onclick = () => $("nav.side").classList.toggle("open");
   const idx=buildIndex(), inp=$("#search"), res=$("#results");
   inp.oninput = () => {
