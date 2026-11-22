@@ -32,6 +32,12 @@ const SOURCES = {
     oral: "Iskoujina, Gnatchenko and Bernal from the University of East Anglia explain that",
     case: "UA"
   },
+  E: {
+    short: "Al Jazeera (2026)",
+    full: "Al Jazeera Staff. (2026, September 21). A simple guide to the Yemen conflict. Al Jazeera. https://www.aljazeera.com/news/2026/9/21/a-brief-history-of-the-yemen-conflict",
+    oral: "Al Jazeera explained in September 2026 that",
+    case: "YE"
+  },
   P: {
     short: "Class PPT (Wk 13)",
     full: "MUF0152 Week 13 slides: Preparation for AT5 & Non-Violent Conflict.",
@@ -151,6 +157,17 @@ const EVIDENCE = [
   {id:"D11", src:"D", fact:"'Citizen chroniclers' sharing real-time updates reshaped the information landscape — e.g. young diarist Yeva Skalietska. Social media is a double-edged sword: it documents reality but also spreads disinformation.", themes:["people","media"]},
   {id:"D12", src:"D", fact:"Ukraine has also used disinformation, such as heroic stories later debunked, to boost morale and win sympathy (Alonso-Martín-Romo et al., 2023).", themes:["media"]},
   {id:"D13", src:"D", fact:"Around 40% of war news articles come from news agencies, 23% from other news media, and only 16% from social media (Udris et al., 2023).", themes:["info","media"]},
+
+  // ===== YEMEN (your AT4 case study — Al Jazeera, 21 Sep 2026; use for Q8 only) =====
+  {id:"E1", src:"E", date:"1990s", fact:"The Houthis emerged in Saada, a mountainous region in the north, in the 1990s, demanding a greater share of power. They come from Yemen's Zaidi Shia minority.", themes:["causes","lessons"]},
+  {id:"E2", src:"E", date:"2011–2014", fact:"The Houthis used anger at Yemen's weak transitional government after the 2011 Arab Spring forced out long-time President Saleh. They took Sanaa in September 2014 and President Hadi fled.", themes:["causes","duration"]},
+  {id:"E3", src:"E", date:"Mar 2015", fact:"Saudi Arabia intervened in March 2015 to support Hadi's government and carried out thousands of attacks. Riyadh sees Iran as a regional threat.", themes:["causes","intl"]},
+  {id:"E4", src:"E", fact:"The article calls the Houthis part of the Iran-backed 'axis of resistance', but adds that the group has its own base, its own interests and its own ambitions.", themes:["causes","lessons"]},
+  {id:"E5", src:"E", date:"Apr 2022", fact:"A UN-mediated truce took effect in April 2022 after seven years of conflict. It brought a marked de-escalation, but low-intensity fighting continued.", themes:["ending","duration"]},
+  {id:"E6", src:"E", date:"2023", fact:"In 2023 Saudi Arabia and the Houthis agreed, after direct talks, to a UN roadmap toward a permanent ceasefire — but the roadmap was never formalised.", quote:"never formalised", themes:["ending","lessons"]},
+  {id:"E7", src:"E", date:"Aug–Sep 2026", fact:"In late August 2026 the Houthis launched a major offensive, saying government forces had violated the 2022 truce. On 10 September they seized Mocha, tightening their control of the Red Sea coast.", themes:["duration","ending"]},
+  {id:"E8", src:"E", date:"2019 / 2026", fact:"In 2019 the UN said about 24 million people (80% of the population) needed help. The article now cites the IOM: 22 million Yemenis, nearly half the population, need urgent aid.", themes:["consequences"]},
+  {id:"E9", src:"E", fact:"Other players: the Saudi-backed Presidential Leadership Council (set up in 2022), the Sunni Islamist Islah party (strongest in Marib) and the National Resistance Forces led by Tareq Saleh.", themes:["causes"]},
 
   // ===== CLASS =====
   {id:"P1", src:"P", fact:"Causes in our case studies (slide 8): ethnic divisions, power, corruption, greed/resources, acquisition of land.", themes:["causes"]},
@@ -313,20 +330,21 @@ const QUESTIONS = [
     q:"What have you learned from your case study that helps you better understand conflict?",
     keywords:[
       ["What have you learned","Personal reflection — 'Before this unit I thought… now I understand…'"],
-      ["your case study","Singular — you can focus on one or compare both"],
+      ["your case study","Singular — YOUR own case study. Yemen (your AT4 presentation) fits perfectly; link it back to Rwanda and Ukraine"],
       ["helps you better understand","Give a GENERAL lesson about conflict, not a history recap"],
       ["conflict","Apply the lesson beyond your case"]
     ],
-    trap:"Retelling the history. Lead with the lesson, then use evidence to show where you learned it.",
-    position:"Conflict is built over many years before the fighting starts, and information is a weapon — so to understand any conflict, ask who benefits, who controls the story, and what happened years before.",
-    evidence:["R4","R9","R10","R11","B4","D8","R22","D1","R35","C14"],
-    spoken:"The biggest thing I've learned is that conflict doesn't start suddenly — it's built over many years. Before this unit, I thought the Rwandan genocide was just an explosion of ethnic hatred. But according to Genocide in Rwanda, page 238, Hutu and Tutsi had lived side by side and intermarried for centuries. The racial categories were invented by German colonisers, and the reading calls this the first step on the path to genocide a hundred years later — page 242. Ukraine taught me something similar: Schrijver quotes a Ukrainian researcher saying independent Ukraine has faced persistent psychological and informational pressure from Russia, long before the 2022 invasion. The second lesson is that information is a weapon — radio in Rwanda, social media in Ukraine. So now, when I hear about a conflict, I ask: who benefits, who controls the story, and what happened years before the fighting started?",
+    trap:"Retelling Yemen's history. Lead with the lesson, then use the evidence. Also don't say Yemen is 'just Sunni against Shia' — the article shows a fight over power, with religion as the label.",
+    position:"My case study, Yemen, taught me two things: religion or ethnicity is often the label while power is the real cause, and a ceasefire is not peace. Rwanda and Ukraine show the same two patterns.",
+    evidence:["E1","E4","R4","R10","E5","E6","E7","R24","B5","P1"],
+    spoken:"From my own case study, Yemen, I learned two things. First, religion or ethnicity is often just the label, and power is the real cause. The Houthis come from the Zaidi Shia minority, but Al Jazeera explains that they began in the 1990s by demanding a greater share of power. Rwanda shows the same pattern. According to the chapter Genocide in Rwanda, page 238, Hutu and Tutsi lived side by side for centuries, and page 242 says the Germans created the racial categories. Second, a ceasefire is not peace. Yemen's UN truce began in April 2022, but the 2023 roadmap was never formalised, and in late August 2026 the Houthis launched a major offensive. In Rwanda, the Hutu elite ignored the Arusha Accords, and Schrijver says Ukraine's Minsk ceasefire stayed uneasy. So now I ask two questions: who wants power, and will the deal really be kept?",
     counters:[
-      ["\"Conflicts can start suddenly, like 6 April 1994.\"","The trigger was sudden, but the plan had names and addresses from late 1992 (p. 251) and the divisions went back a century (p. 242). Triggers aren't causes."],
-      ["\"Rwanda and Ukraine are too different to compare.\"","Different eras and types — genocide vs inter-state war — but both show leaders using information to mobilise people, and both depended on international responses (UNAMIR vs Western support)."],
-      ["\"The main lesson is that the UN fails.\"","It failed in Rwanda (p. 253–255), but in Ukraine Western support keeps Ukraine fighting (ISW). The lesson is that international WILL decides outcomes."]
+      ["\"Yemen is just Sunni against Shia.\"","Religion is part of it: the Houthis come from the Zaidi Shia minority and Islah is Sunni Islamist (Al Jazeera). But the article says the Houthis began by demanding a greater share of power and have their own interests, and it also names Saudi–Iran rivalry. So I say religion is the label, power is the driver."],
+      ["\"Yemen isn't one of our case studies — Rwanda and Ukraine are.\"","Q8 says 'your case study'. Yemen is my AT4 peer-presentation case from class (Week 13 slides: Religious divisions — Houthis). I use it for the lesson, then link straight back to Rwanda and Ukraine."],
+      ["\"A ceasefire is better than nothing.\"","Yes — the April 2022 truce brought a marked de-escalation (Al Jazeera). But low-intensity fighting continued, the 2023 roadmap was never formalised, and fighting escalated in August 2026. A ceasefire helps only if the deal is kept."],
+      ["\"Rwanda was genocide, Yemen is a war — you can't compare them.\"","Different types, but the lesson is about patterns: identity labels used in a fight for power (Rwanda p. 238, 242) and peace deals that failed (Arusha p. 250, Minsk, the 2022 truce)."]
     ],
-    a4:"Q8 LESSON 1 built over years: intermarried for centuries (p.238); colonial myth = 'first step… 100 years later' (p.242); UA: persistent pressure since independence (Turanskiy/Schrijver) | LESSON 2 info = weapon: radio 1994 vs 'social media war' 2022 | Ask: who benefits? who controls the story? what happened years before?"
+    a4:"Q8 MY CASE = YEMEN (AT4; Al Jazeera, Sep 2026) | LESSON 1 LABEL ≠ CAUSE: Houthis = Zaidi Shia BUT began 1990s Saada demanding 'greater share of power'; own interests (not only Iran) | RW p.238 intermarried for centuries; p.242 Germans made categories | LESSON 2 CEASEFIRE ≠ PEACE: Yemen truce Apr 2022 → 2023 roadmap never formalised → late Aug 2026 Houthi offensive | RW Arusha ignored (p.250) | UA Minsk 2015 uneasy (Schrijver) | Ask: who wants power? will the deal be kept?"
   }
 ];
 
@@ -392,7 +410,11 @@ const TERMS = [
   ["Shadow-banning","Hiding content from feeds without removing it — done to Ukrainian war updates on X (Iskoujina et al.)."],
   ["Active measures","Russia's long tradition of spreading disinformation as a tool of war (Iskoujina et al.)."],
   ["Pragmatic non-violence","Strategic, objective-driven non-violent action; can be more effective and less costly than armed rebellion (class)."],
-  ["Principled non-violence","Rejecting violence on moral, ethical or spiritual grounds (class)."]
+  ["Principled non-violence","Rejecting violence on moral, ethical or spiritual grounds (class)."],
+  ["Houthis (Ansar Allah)","Armed movement from Yemen's Zaidi Shia minority. Emerged in Saada in the 1990s demanding a greater share of power; took Sanaa in September 2014 (Al Jazeera)."],
+  ["Zaidi Shia","The Shia minority the Houthis come from (Al Jazeera)."],
+  ["Yemen truce (April 2022)","UN-mediated truce after seven years of war: marked de-escalation, but low-intensity fighting continued. The Houthis said government forces violated it in August 2026 (Al Jazeera)."],
+  ["Presidential Leadership Council (PLC)","Saudi-backed council set up in 2022 when Hadi transferred his powers; tasked with steering talks toward a permanent ceasefire (Al Jazeera)."]
 ];
 
 // ---------- QUIZ ----------
@@ -424,7 +446,10 @@ const QUIZ = [
   {q:"According to the PPT, extra research should…", o:["Find new case studies","Fill gaps, not find new examples","Replace the readings","Be avoided entirely"], a:1, why:"Slide 4: fill gaps NOT find new examples."},
   {q:"After the 2015 Minsk agreements, Schrijver says…", o:["The war ended","There was only an uneasy ceasefire and Crimea stayed annexed","Ukraine joined NATO","Russia withdrew"], a:1, why:"Shows that ceasefires aren't endings (Q6)."},
   {q:"Russia's 2022 reserve callup brought in ~330,000 men. How many fled Russia (ISW)?", o:["About half as many","About the same","About twice as many","None"], a:2, why:"Twice as many fled to avoid fighting."},
-  {q:"What did the World Bank and IMF call Habyarimana's regime?", o:["A dictatorship","A model of development","A failed state","A threat to peace"], a:1, why:"They didn't look beneath the surface (p. 247) — a good lesson for Q8."}
+  {q:"What did the World Bank and IMF call Habyarimana's regime?", o:["A dictatorship","A model of development","A failed state","A threat to peace"], a:1, why:"They didn't look beneath the surface (p. 247) — a good lesson for Q8."},
+  {q:"Q8 (Yemen): According to Al Jazeera, what did the Houthis demand when they emerged in Saada in the 1990s?", o:["A greater share of power","A Sunni caliphate","Saudi troops to leave","Independence for Saada"], a:0, why:"A greater share of power — the label (Zaidi Shia) is not the whole cause (Al Jazeera, 2026)."},
+  {q:"What happened to the 2023 Saudi–Houthi UN roadmap toward a permanent ceasefire?", o:["It ended the war","It was never formalised","The UN cancelled it in 2022","It created the PLC"], a:1, why:"Agreed after direct talks but never formalised; the Houthis launched a major offensive in late August 2026 (Al Jazeera)."},
+  {q:"Which three examples best show 'a ceasefire or peace deal is not peace' (Q8)?", o:["Yemen 2022 truce, Rwanda's Arusha Accords, Ukraine's Minsk agreements","Yemen 2014, Rwanda 1990, Ukraine 2013","Yemen 2015, Rwanda 1994, Ukraine 2022","Only Rwanda's Arusha Accords"], a:0, why:"Yemen's truce didn't hold (E5–E7), the Hutu elite ignored Arusha (p. 250), and Minsk left only an uneasy ceasefire (Schrijver)."}
 ];
 
 // ---------- TIMELINES ----------
@@ -472,6 +497,16 @@ const TIMELINE = {
     ["Jul–Oct 2026","Over 40,000 Russian casualties per month (ISW)"],
     ["21 Oct 2026","The Insider exposes Kremlin officials behind fakes (Detector Media)"],
     ["23 Oct 2026","ISW: Russian victory 'extraordinarily unlikely' unless Western support collapses"]
+  ]  ,
+  YE: [
+    ["1990s","Houthis emerge in Saada, demanding a greater share of power (Al Jazeera)"],
+    ["2011","Arab Spring forces out President Saleh; weak transitional government"],
+    ["Sep 2014","Houthis take Sanaa; President Hadi flees"],
+    ["Mar 2015","Saudi Arabia intervenes to support Hadi's government"],
+    ["Apr 2022","UN-mediated truce — marked de-escalation, but low-intensity fighting continues"],
+    ["2023","Saudi–Houthi UN roadmap to a permanent ceasefire — never formalised"],
+    ["Late Aug 2026","Houthis launch a major offensive, saying the truce was violated"],
+    ["10 Sep 2026","Houthis seize Mocha; tighter control of the Red Sea coast"]
   ]
 };
 

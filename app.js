@@ -13,7 +13,7 @@ const store = {
 };
 const EVI = Object.fromEntries(EVIDENCE.map(e => [e.id, e]));
 const caseOf = e => SOURCES[e.src].case;
-const caseLabel = {RW:"Rwanda", UA:"Ukraine", CL:"Class"};
+const caseLabel = {RW:"Rwanda", UA:"Ukraine", YE:"Yemen (AT4)", CL:"Class"};
 const shuffle = a => { a=[...a]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} return a; };
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),1600); }
 function copy(text){
@@ -147,7 +147,7 @@ routes.home = () => {
   <h2>Teacher's rules (from the Week 13 slides)</h2>
   <div class="card">
     <ul style="margin:0;padding-left:20px">
-      <li>Use <b>Rwanda and Ukraine</b> as your case studies — no random new ones.</li>
+      <li>Use <b>Rwanda and Ukraine</b> as your case studies — no random new ones. The only extra case is <b>Yemen (your own AT4 presentation)</b>, and only for Q8, linked back to Rwanda and Ukraine.</li>
       <li>"Conflict" was added to Q2 and Q4 to <b>broaden</b> your evidence.</li>
       <li>Find <b>2–4 pieces of evidence</b> per question, from <b>each</b> case study.</li>
       <li>Extra research should <b>fill gaps, NOT find new examples</b>.</li>
@@ -219,8 +219,8 @@ routes.q = (parts) => {
     <p class="note"><b>Listen</b> highlights each sentence as it's read — tap any sentence to start from there. <b>Shadow</b> pauses after each sentence so you can repeat it out loud. <b>Memory mode</b> hides every third word (tap to reveal). Learn the structure and evidence, not every word, so it sounds natural.</p>
   </div>
   <div id="tab2" hidden>
-    <p class="note">Rwanda evidence first, then Ukraine. Aim to use at least one from each.</p>
-    ${q.evidence.map(id=>EVI[id]).filter(Boolean).sort((a,b)=>caseOf(a)==="RW"?-1:caseOf(b)==="RW"?1:0).map(e=>evCard(e)).join("")}
+    <p class="note">${q.n===8 ? "Your own case study (Yemen, AT4) first, then link back to Rwanda and Ukraine." : "Rwanda evidence first, then Ukraine. Aim to use at least one from each."}</p>
+    ${q.evidence.map(id=>EVI[id]).filter(Boolean).sort((a,b)=>{const r=q.n===8?{YE:0,RW:1,UA:2,CL:3}:{RW:0,UA:1,YE:2,CL:3}; return (r[caseOf(a)]??9)-(r[caseOf(b)]??9);}).map(e=>evCard(e)).join("")}
     <a class="btn" href="#evidence">Open full evidence bank →</a>
   </div>
   <div id="tab3" hidden>
@@ -285,7 +285,7 @@ routes.evidence = (parts, params) => `
   <h1>Evidence bank</h1>
   <p class="lead">${EVIDENCE.length} facts, all checked against your readings. Filter by case, theme or source, or search.</p>
   <div class="filters noprint">
-    <select id="fcase"><option value="">All cases</option><option value="RW">Rwanda</option><option value="UA">Ukraine</option><option value="CL">Class</option></select>
+    <select id="fcase"><option value="">All cases</option><option value="RW">Rwanda</option><option value="UA">Ukraine</option><option value="YE">Yemen (your AT4 case)</option><option value="CL">Class</option></select>
     <select id="ftheme"><option value="">All themes</option>${Object.entries(THEMES).map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}</select>
     <select id="fsrc"><option value="">All sources</option>${Object.entries(SOURCES).map(([k,s])=>`<option value="${k}">${esc(s.short)}</option>`).join("")}</select>
     <input type="text" id="ftext" placeholder="Search facts…">
@@ -717,7 +717,7 @@ routes.bias.after = () => {
 // ---------- TIMELINE ----------
 routes.timeline = () => `
   <h1>Timelines</h1>
-  <p class="lead">Use these to show how conflict builds over time (Q3, Q8) and to compare the two cases.</p>
+  <p class="lead">Use these to show how conflict builds over time (Q3, Q8) and to compare the two main cases. Yemen (your AT4 case) is at the bottom — for Q8 only.</p>
   <div class="cols">
     <div><h2><span class="pill RW">Rwanda</span> Genocide in Rwanda</h2><div class="tl">${TIMELINE.RW.map(([d,t])=>`<div class="i"><b>${esc(d)}</b>${esc(t)}</div>`).join("")}</div></div>
     <div><h2><span class="pill UA">Ukraine</span> Russia–Ukraine War</h2><div class="tl">${TIMELINE.UA.map(([d,t])=>`<div class="i"><b>${esc(d)}</b>${esc(t)}</div>`).join("")}</div></div>
@@ -730,7 +730,10 @@ routes.timeline = () => `
   <tr><th>International response</th><td>Abandoned: UNAMIR powerless, troops withdrawn, US blocked help (p. 254–255)</td><td>Strong Western support keeps Ukraine fighting (ISW)</td></tr>
   <tr><th>How it ended / status</th><td>RPF military victory, 19 July 1994 (p. 252)</td><td>Ongoing; ISW: Russian victory "extraordinarily unlikely" unless Western support collapses</td></tr>
   <tr><th>Same</th><td colspan="2">Leaders seeking power; information used as a weapon; peace deals that failed (Arusha / Minsk); international will shaped the outcome</td></tr>
-  </table></div>`;
+  </table></div>
+  <h2><span class="pill YE">Yemen (AT4)</span> Your own case study — Q8 only</h2>
+  <p class="note">Source: Al Jazeera (21 Sep 2026), "A simple guide to the Yemen conflict". Always link it back to Rwanda and Ukraine.</p>
+  <div class="tl">${TIMELINE.YE.map(([d,t])=>`<div class="i"><b>${esc(d)}</b>${esc(t)}</div>`).join("")}</div>`;
 
 // ---------- PHRASES ----------
 routes.phrases = () => `
@@ -801,7 +804,7 @@ function systemPrompt(){
   return `You are a friendly, expert tutor helping a Monash College Foundation Year student prepare for AT5 in MUF0152 Contemporary Issues 2: a 40-minute academic group discussion (5–6 students) comparing the 1994 Rwandan Genocide and the Russia–Ukraine War. The student may bring one A4 sheet of notes. Midway, the teacher gives unseen questions with one minute to prepare.
 
 RULES
-- The teacher said: use ONLY Rwanda and Ukraine as case studies. Never suggest other case studies (no Myanmar, Srebrenica, Colombia, etc.). Class content (media bias types, non-violent action examples from class) is allowed as supporting links. Extra research should fill gaps, not add new examples.
+- The teacher said: use ONLY Rwanda and Ukraine as case studies. Never suggest other case studies (no Myanmar, Srebrenica, Colombia, etc.). ONE exception: the student\'s own AT4 peer-presentation case, Yemen and the Houthis (source E = Al Jazeera, 21 Sep 2026, items E1–E9), may be used for Q8 only, because Q8 says "your case study"; always link it back to Rwanda and Ukraine, and use only the E items — never invent Houthi or Yemen facts. Class content (media bias types, non-violent action examples from class) is allowed as supporting links. Extra research should fill gaps, not add new examples.
 - Ground every factual claim in the evidence bank below. Cite like (Genocide in Rwanda, p. 250) or (ISW, 2026) or (Detector Media, 2026). Never invent facts, figures, quotes or page numbers. If something is not in the readings, say so plainly and suggest how the student could check.
 - Focus on the exact words of each question (e.g. "today", "to what extent", "short-term AND long-term", "ordinary people").
 - The student is an English-as-an-additional-language learner: use clear, simple English and short paragraphs. Spoken answers must sound natural when said aloud and last 45–75 seconds (about 110–170 words), with sources named out loud.
@@ -885,7 +888,7 @@ routes.ask = () => {
   const q = QUESTIONS.find(x => x.n === ASK.lastQ);
   return `
   <h1>Ask Claude</h1>
-  <p class="lead">Your AT5 tutor, using your own claude.ai account. It knows the 8 questions, your evidence bank and the marking criteria, and sticks to Rwanda and Ukraine.</p>
+  <p class="lead">Your AT5 tutor, using your own claude.ai account. It knows the 8 questions, your evidence bank and the marking criteria, and sticks to Rwanda and Ukraine (plus your own Yemen case for Q8).</p>
   <div id="askAvail"></div>
   <div class="card askcard">
     <div class="row" style="justify-content:space-between">
@@ -976,7 +979,7 @@ routes.ask.after = async (parts, params, main) => {
     const bubble = chat.lastElementChild;
     ASK.busy = true; $("#askSend", main).hidden = true; $("#askStop", main).hidden = false;
     let convo = ASK.history.slice(0, -1).slice(-20); while(convo.length && convo[0].role !== "user") convo.shift();
-    const messages = [{role:"user", content: systemPrompt()}, {role:"assistant", content:"Understood. I'll stick to Rwanda and Ukraine and the evidence bank."}, ...convo];
+    const messages = [{role:"user", content: systemPrompt()}, {role:"assistant", content:"Understood. I'll stick to Rwanda and Ukraine (plus Yemen for Q8 only) and the evidence bank."}, ...convo];
     ASK.ctrl = new AbortController();
     const last = ASK.history[ASK.history.length - 1];
     try{
