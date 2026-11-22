@@ -781,7 +781,7 @@ const ARTIFACT_URL = "https://claude.ai/artifact/1uYFqX8r64mJQVnBjufjLX";
 const hasClaude = () => !!(window.claude && typeof window.claude.use === "function");
 function getSample(){
   if(ASK.sample !== undefined) return Promise.resolve(ASK.sample);
-  if(!hasClaude()){ ASK.sample = null; return Promise.resolve(null); }
+  if(!hasClaude()){ const k = store.get("apiKey", ""); ASK.sample = k ? makeApiSample(k, store.get("apiModel", API_MODELS[0][0])) : null; return Promise.resolve(ASK.sample); }
   return window.claude.use("sample").then(s => (ASK.sample = s || null)).catch(() => (ASK.sample = null));
 }
 function askClaude(text, opts={}){ ASK.pending = {text, send: opts.send !== false}; if(opts.q) ASK.lastQ = opts.q; if(location.hash === "#ask") go(); else location.hash = "#ask"; }
@@ -809,9 +809,50 @@ RULES
 - When asked to check or mark an answer: give a score out of 10 against the marking criteria, 2–3 specific strengths, the 2–3 most important fixes, and a short improved version.
 - When asked to quiz: ask ONE question at a time and wait for the answer, then give feedback.
 - In a mock discussion: play the teacher and three invented classmates (Sam, Priya and Leo). Write each speaker's turn on its own line starting with their name and a colon. Keep each turn to 1–3 sentences. Challenge the student's view with evidence from the readings, agree or build sometimes, and then STOP and wait for the student. Occasionally the teacher asks a follow-up or an unseen question.
-${q ? `\nThe student is currently studying Q${q.n}: "${q.q}"` : ""}
 
-${knowledge()}`;
+${knowledge()}${FOCUS_MARK}${q ? `The student is currently studying Q${q.n}: "${q.q}"` : "General AT5 preparation."}`;
+}
+const FOCUS_MARK = "\n\nCURRENT FOCUS: ";
+
+// ---- Anthropic API mode (GitHub Pages): the student's own key, saved only in this browser ----
+const API_MODELS = [["claude-sonnet-5-5","Claude Sonnet 5.5 — recommended"],["claude-haiku-5-5","Claude Haiku 5.5 — cheapest"],["claude-opus-5-5","Claude Opus 5.5 — strongest, most expensive"]];
+function makeApiSample(key, model){
+  const fn = async (messages, opts={}) => {
+    const sys = messages[0].content, cut = sys.lastIndexOf(FOCUS_MARK);
+    const system = [{type:"text", text: sys.slice(0, cut), cache_control:{type:"ephemeral"}}, {type:"text", text: sys.slice(cut).trim()}];
+    const body = { model, max_tokens: 2048, stream: true, system, messages: messages.slice(2) };
+    let res;
+    try{
+      res = await fetch("https://api.anthropic.com/v1/messages", { method:"POST", signal: opts.signal,
+        headers: { "content-type":"application/json", "x-api-key": key, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
+        body: JSON.stringify(body) });
+    }catch(e){ if(e.name==="AbortError") throw {code:"aborted"}; throw {code:"network", message:"Couldn't reach the Anthropic API — check your internet connection."}; }
+    if(!res.ok){
+      let msg = ""; try{ const j = await res.json(); msg = (j.error && j.error.message) || ""; }catch(e){}
+      if(res.status===401 || res.status===403) throw {code:"bad_key", message: msg || "The API key was rejected."};
+      if(res.status===429 || res.status===529) throw {code:"rate_limited", message: msg};
+      if(/credit|billing|balance/i.test(msg)) throw {code:"no_credit", message: msg};
+      throw {code:"api_error", message: msg || ("API error " + res.status)};
+    }
+    const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "", text = "", stop = "";
+    try{
+      for(;;){
+        const {value, done} = await reader.read(); if(done) break;
+        buf += dec.decode(value, {stream:true});
+        let i; while((i = buf.indexOf("\n\n")) !== -1){
+          const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+          const line = chunk.split("\n").find(l => l.startsWith("data:")); if(!line) continue;
+          let ev; try{ ev = JSON.parse(line.slice(5)); }catch(e){ continue; }
+          if(ev.type==="content_block_delta" && ev.delta && ev.delta.type==="text_delta"){ text += ev.delta.text; opts.onText && opts.onText({text, delta: ev.delta.text}); }
+          else if(ev.type==="message_delta" && ev.delta && ev.delta.stop_reason){ stop = ev.delta.stop_reason; }
+          else if(ev.type==="error"){ throw {code:"api_error", message:(ev.error && ev.error.message) || "Stream error", text}; }
+        }
+      }
+    }catch(e){ if(e && e.name==="AbortError") throw {code:"aborted", text}; throw e.code ? e : {code:"network", message:"The connection dropped.", text}; }
+    return { text, truncated: stop === "max_tokens" };
+  };
+  fn.isApi = true; fn.model = model;
+  return fn;
 }
 function md(text){
   const lines = esc(text).split(/\n/); let out = "", inList = false;
@@ -903,9 +944,27 @@ routes.ask.after = async (parts, params, main) => {
     return;
   }
   if(!sample){
-    $("#askAvail", main).innerHTML = `<div class="trap"><b>Ask Claude works on your private claude.ai link</b>, where it uses your own Claude account. Open it here: <a href="${ARTIFACT_URL}">${ARTIFACT_URL}</a><br><span class="note">(Sign in to claude.ai. This GitHub page can't reach Claude without a separate paid API key, which would be public on a website.)</span></div>`;
-    $$("#chips button, #askSend, #askMic", main).forEach(b => b.disabled = true);
+    $("#askAvail", main).innerHTML = `<div class="card setup">
+      <h3 style="margin-top:0">Two ways to chat with Claude here</h3>
+      <div class="opt2"><div><b>1. Use your Claude plan</b> <span class="pill th">no extra cost</span><div class="note">Opens this same tutor on claude.ai, signed in with your account. Everything works there, including Ask Claude.</div></div>
+        <a class="btn primary" href="${ARTIFACT_URL}#ask" target="_blank" rel="noopener">Open in claude.ai ↗</a></div>
+      <div class="opt2"><div><b>2. Chat right here with an Anthropic API key</b> <span class="pill th">pay-as-you-go</span>
+        <div class="note">Get a key at console.anthropic.com (separate from your Claude plan — usually a few cents per question). The key is saved <b>only in this browser</b>, never on GitHub. Anyone using this browser could use it, so remove it on shared devices.</div>
+        <div class="row" style="margin-top:8px"><input type="password" id="apiKeyIn" placeholder="Paste your key (sk-ant-…)" autocomplete="off" style="flex:2;min-width:220px">
+        <select id="apiModelIn" style="flex:1;min-width:200px">${API_MODELS.map(([id,l])=>`<option value="${id}" ${id===store.get("apiModel",API_MODELS[0][0])?"selected":""}>${l}</option>`).join("")}</select>
+        <button class="btn" id="apiSave">Save key</button></div></div></div>
+    </div>`;
+    $("#apiSave", main).onclick = () => {
+      const k = $("#apiKeyIn", main).value.trim();
+      if(!/^sk-ant-/.test(k)){ toast("That doesn't look like an Anthropic key (sk-ant-…)"); return; }
+      store.set("apiKey", k); store.set("apiModel", $("#apiModelIn", main).value); ASK.sample = undefined; toast("Key saved in this browser"); go();
+    };
+    $$("#chips button, #askSend", main).forEach(b => b.disabled = true);
     return;
+  }
+  if(sample.isApi){
+    $("#askAvail", main).innerHTML = `<div class="apibar">Chatting with your own API key · ${esc((API_MODELS.find(m=>m[0]===sample.model)||[0,sample.model])[1])} · <a href="${ARTIFACT_URL}#ask" target="_blank" rel="noopener">use claude.ai instead</a> · <button class="linkbtn" id="apiRemove">Remove key</button></div>`;
+    $("#apiRemove", main).onclick = () => { store.set("apiKey", ""); ASK.sample = undefined; toast("Key removed from this browser"); go(); };
   }
 
   const send = async (text) => {
@@ -929,6 +988,8 @@ routes.ask.after = async (parts, params, main) => {
       if(code === "aborted" || (e && e.name === "AbortError")) last.content = (last.content || "") + "\n\n_(Stopped.)_";
       else if(code === "not_granted"){ ASK.history.splice(-2); note.textContent = "Claude access wasn't allowed. Press Send again and choose Allow when asked."; }
       else if(code === "rate_limited"){ ASK.history.splice(-2); input.value = text; note.textContent = "Claude is busy or you've hit a usage limit — wait a minute, then press Send again."; }
+      else if(code === "bad_key"){ ASK.history.splice(-2); input.value = text; note.textContent = "Your API key was rejected. Remove it and paste a valid key from console.anthropic.com."; }
+      else if(code === "no_credit"){ ASK.history.splice(-2); input.value = text; note.textContent = "Your Anthropic account needs credit (console.anthropic.com → Billing). Or use 'Open in claude.ai' with your Claude plan."; }
       else { if(e && e.text) last.content = e.text; else ASK.history.splice(-2); input.value = input.value || text; note.textContent = "Something went wrong: " + ((e && e.message) || "please try again."); }
     }
     ASK.busy = false; ASK.ctrl = null;

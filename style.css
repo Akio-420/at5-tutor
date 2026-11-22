@@ -170,3 +170,9 @@ details.card summary{cursor:pointer}
 .askrow textarea{flex:1;min-height:52px}
 .askbtns{display:flex;gap:6px}
 @media (max-width:820px){.askrow{flex-direction:column;align-items:stretch}.askbtns{justify-content:flex-end}.msg{max-width:95%}}
+
+.setup .opt2{display:flex;gap:14px;align-items:center;justify-content:space-between;padding:12px 0;border-top:1px solid var(--line)}
+.setup .opt2:first-of-type{border-top:none}
+@media (max-width:820px){.setup .opt2{flex-direction:column;align-items:stretch}}
+.apibar{font-size:.85rem;color:var(--muted);margin:6px 0 10px}
+.linkbtn{background:none;border:none;color:var(--accent);text-decoration:underline;padding:0;font:inherit;cursor:pointer}
