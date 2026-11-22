@@ -50,16 +50,17 @@ const conf = n => store.get("conf"+n, -1);
 function navDots(){ QUESTIONS.forEach(q => { const d=$(`#dot${q.n}`); if(!d) return; const c=conf(q.n); d.className="dot"+(c===2?" done":c===1?" mid":""); }); }
 
 // ---------- speech ----------
-function speak(text){ Voice.play(Voice.sentences(text), {onError: toast}); }
+function speak(text){ Voice.play(Voice.sentences(text), {voiceName: mainVoice(), onError: toast}); }
 const stopSpeak = () => Voice.stop();
 
 // Classmate defaults to a different voice from the narrator
-function classmateVoice(){ if(Voice.settings.voice2) return Voice.settings.voice2; const vs=Voice.voices(); const main=Voice.settings.voice || (vs[0]&&vs[0].name); const other=vs.find(v=>v.name!==main); return other ? other.name : main; }
+function classmateVoice(){ const vs=Voice.voiceList(); if(Voice.settings.voice2 && vs.some(v=>v.name===Voice.settings.voice2)) return Voice.settings.voice2; const main=mainVoice(); const other=vs.find(v=>v.name!==main && (v.lang==="Claude")===(main||"").startsWith("claude:")) || vs.find(v=>v.name!==main); return other ? other.name : main; }
+function mainVoice(){ const vs=Voice.voiceList(); if(Voice.settings.voice && vs.some(v=>v.name===Voice.settings.voice)) return Voice.settings.voice; return vs[0] ? vs[0].name : ""; }
 // Voice settings bar (voice, classmate voice, speed) — shared by every page that reads aloud
 function voiceBar(withClassmate){
-  const opts = sel => Voice.voices().map(v=>`<option value="${esc(v.name)}" ${v.name===sel?"selected":""}>${esc(v.name)} (${esc(v.lang)})</option>`).join("") || `<option value="">Default voice</option>`;
+  const opts = sel => Voice.voiceList().map(v=>`<option value="${esc(v.name)}" ${v.name===sel?"selected":""}>${esc(v.label)}</option>`).join("") || `<option value="">Default voice</option>`;
   return `<div class="vbar noprint">
-    <label>Voice <select data-vset="voice">${opts(Voice.settings.voice)}</select></label>
+    <label>Voice <select data-vset="voice">${opts(mainVoice())}</select></label>
     ${withClassmate?`<label>Classmate voice <select data-vset="voice2">${opts(classmateVoice())}</select></label>`:""}
     <label>Speed <select data-vset="rate">${[0.75,0.85,0.95,1,1.1,1.25].map(r=>`<option value="${r}" ${+Voice.settings.rate===r?"selected":""}>${r}×</option>`).join("")}</select></label>
     <button class="btn small" data-vtest>Test</button>
@@ -67,7 +68,7 @@ function voiceBar(withClassmate){
 }
 function bindVoiceBar(root){
   $$("[data-vset]", root).forEach(s => s.onchange = () => Voice.setSetting(s.dataset.vset, s.dataset.vset==="rate" ? +s.value : s.value));
-  $$("[data-vtest]", root).forEach(b => b.onclick = () => Voice.play(["This is how your answers will sound."], {onError: toast}));
+  $$("[data-vtest]", root).forEach(b => b.onclick = () => Voice.play(["This is how your answers will sound."], {voiceName: mainVoice(), onError: toast}));
 }
 // Renders text as clickable sentences; returns a highlighter
 function sentenceView(el, text, {hideWords=false, onPick}={}){
@@ -106,6 +107,7 @@ function go(){
   bindCopy(main);
   $$("nav.side a").forEach(a => { const href=a.getAttribute("href"); a.classList.toggle("active", href==="#"+h || href==="#"+key); });
   $("nav.side").classList.remove("open");
+  const fab=$("#askfab"); if(fab) fab.classList.toggle("hide", key==="ask");
   navDots();
   if(!params.get("focus")) window.scrollTo(0,0);
 }
@@ -187,7 +189,7 @@ routes.q = (parts) => {
   return `
   <div class="note">Question ${n} of 8</div>
   <div class="card"><div class="qtext">${highlightQ(q)}</div>
-    <div class="row" style="margin-top:12px"><span class="note">How ready are you?</span>
+    <div class="row" style="margin-top:12px"><button class="btn small" id="askQ">💬 Ask Claude about Q${n}</button><span class="note">How ready are you?</span>
       ${CONF.map((l,i)=>`<button class="btn small ${c===i?(i===2?"good":"primary"):""}" data-conf="${i}">${l}</button>`).join("")}
     </div>
   </div>
@@ -251,12 +253,14 @@ routes.q.after = (parts, params, main) => {
     stopSpeak();
   });
   $$("[data-conf]", main).forEach(b => b.onclick = () => { store.set("conf"+n, +b.dataset.conf); go(); });
+  ASK.lastQ = n;
+  $("#askQ", main).onclick = () => askClaude("", {q:n, send:false});
   bindVoiceBar(main);
   let mem=false, view;
   const turn=$("#turn", main);
   const run = (start=0, shadow=false) => {
     turn.hidden=true;
-    Voice.play(view.parts, { start,
+    Voice.play(view.parts, { start, voiceName: mainVoice(),
       onSentence: i => { turn.hidden=true; view.clear(); view.mark(i); },
       gap: shadow ? (s => Math.max(1800, s.split(/\s+/).length*420/Voice.settings.rate)) : null,
       onGap: i => { view.mark(i,"turn"); turn.hidden=false; },
@@ -313,7 +317,7 @@ function stopRec(){
 }
 const fmtT = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
 function micNote(){
-  const missing=[]; if(!Voice.hasSR) missing.push("live transcript"); if(!Voice.hasRec) missing.push("recording");
+  const missing=[]; if(!Voice.transcriptOK) missing.push("live transcript"); if(!Voice.hasRec) missing.push("recording");
   return missing.length ? `<div class="trap noprint"><b>Heads-up:</b> ${missing.join(" and ")} isn't available in this browser. Chrome or Safari opened directly (e.g. your GitHub Pages link) works best. You can still tap the transcript box and use your keyboard's 🎤 dictation, then press <b>Check my answer</b>.</div>` : "";
 }
 function allQuestionOptions(sel){
@@ -327,6 +331,7 @@ function feedbackHTML(r, model, modelLabel){
     <div class="note" style="text-align:right">${r.words} words · ${Math.round(r.secs)} sec${r.wpm?` · ${r.wpm} wpm`:""}</div></div>
     ${r.checks.map(c=>`<div class="chk ${c.ok?"ok":"no"}"><span>${c.ok?"✓":"✗"}</span><div><b>${esc(c.label)}</b>${c.ok?"":`<div class="note">${esc(c.tip)}</div>`}</div></div>`).join("")}
     <p class="note">Automatic checks look for key words in your transcript, so names like "Iskoujina" may be misheard — fix the transcript and press Check again.</p>
+    <div class="row" style="margin:10px 0"><button class="btn primary" data-askfb>💬 Get Claude's detailed feedback</button></div>
     <details><summary><b>${modelLabel}</b></summary><div class="spoken" style="margin-top:8px">${esc(model)}</div></details>
   </div>`;
 }
@@ -334,9 +339,9 @@ function feedbackHTML(r, model, modelLabel){
 async function startCapture(main, {transcript=true, record=true}){
   const ta=$(".tx", main), interim=$(".interim", main), meter=$(".meter span", main), note=$(".capnote", main);
   ta.value=""; ta.readOnly=false; interim.textContent=""; note.textContent="";
-  if(transcript && Voice.hasSR){
+  if(transcript && Voice.transcriptOK){
     S.rec = Voice.Recognizer((fin, inter) => { ta.value=fin; interim.textContent=inter; ta.scrollTop=ta.scrollHeight; },
-      st => { if(st==="blocked"||st==="network") ta.readOnly=false; if(st==="blocked") note.textContent="Live transcript blocked — allow the microphone, or dictate into the box after."; if(st==="network") note.textContent="Live transcript needs an internet connection."; });
+      st => { if(st==="needs-click"){ ta.readOnly=false; note.textContent="Tap Start again to turn on the live transcript."; } if(st==="blocked"||st==="network") ta.readOnly=false; if(st==="blocked") note.textContent="Live transcript blocked — allow the microphone, or dictate into the box after."; if(st==="network") note.textContent="Live transcript needs an internet connection."; });
     if(S.rec.start()) ta.readOnly=true;   // locked only while live transcript is writing
   }
   if(record && Voice.hasRec){
@@ -374,7 +379,7 @@ routes.speak = (parts, params) => {
       <select id="sq">${allQuestionOptions(sel)}</select>
       <div class="row" style="margin-top:10px">
         <label class="check" style="margin:0"><input type="checkbox" id="prep" checked> 1-minute prep</label>
-        <label class="check" style="margin:0"><input type="checkbox" id="optTx" ${Voice.hasSR?"checked":"disabled"}> Live transcript</label>
+        <label class="check" style="margin:0"><input type="checkbox" id="optTx" ${Voice.transcriptOK?"checked":"disabled"}> Live transcript</label>
         <label class="check" style="margin:0"><input type="checkbox" id="optRec" ${Voice.hasRec?"checked":"disabled"}> Record audio</label>
         <button class="btn small" id="rand">🎲 Random</button>
         <button class="btn small" id="hearQ">🔊 Hear question</button>
@@ -464,10 +469,13 @@ routes.speak.after = (parts, params, main) => {
       if(secs>=150) finish(); },200);
   };
   $("#start").onclick = () => {
+    if($("#start").dataset.go){ delete $("#start").dataset.go; $("#start").textContent="Start"; talk(); return; }
     stopRec(); clearTimer(); Voice.stop(); $("#fb0").innerHTML=""; secs=0;
     if($("#prep").checked){
       const p0=Date.now(); clock.className="timer prep"; st.textContent="Prep — position + one Rwanda + one Ukraine fact";
-      activeTimer=setInterval(()=>{ const left=60-(Date.now()-p0)/1000; clock.textContent=fmtT(Math.max(0,Math.ceil(left))); bar.style.width=(100-Math.max(0,left)/60*100)+"%"; if(left<=0){ clearTimer(); talk(); } },200);
+      activeTimer=setInterval(()=>{ const left=60-(Date.now()-p0)/1000; clock.textContent=fmtT(Math.max(0,Math.ceil(left))); bar.style.width=(100-Math.max(0,left)/60*100)+"%"; if(left<=0){ clearTimer();
+        if(Voice.hasDictation && $("#optTx").checked){ clock.className="timer over"; clock.textContent="Go!"; st.textContent="Prep over — tap 🎙 Speak now"; $("#start").textContent="🎙 Speak now"; $("#start").dataset.go="1"; }
+        else talk(); } },200);
     } else talk();
   };
   const finish = async () => {
@@ -485,6 +493,7 @@ routes.speak.after = (parts, params, main) => {
     if(!text.trim()){ $("#fb0").innerHTML=`<div class="trap">No words captured. Type or dictate what you said into the transcript box, then press <b>Check my answer</b>.</div>`; return; }
     const r=Voice.analyse(text, s>=8 ? s : text.split(/\s+/).length/2.4, Q.q, "answer");
     $("#fb0").innerHTML = feedbackHTML(r, Q.model, String(Q.id)[0]==="u" ? "Suggested angle" : "Compare with the model answer");
+    $("#fb0 [data-askfb]").onclick = () => askClaude(`Check my spoken answer. Question: "${Q.q}"\nI spoke for about ${Math.round(r.secs)} seconds. Transcript (from speech recognition, so names may be misspelled):\n"${text.trim()}"`, {q: String(Q.id)[0]==="u" ? 0 : +Q.id});
     if(save && text!==S.lastSaved){ S.lastSaved=text; const id=Date.now(); Voice.saveAttempt({id, at:new Date().toISOString(), mode:"answer", q:Q.id, secs:Math.round(r.secs), wpm:r.wpm, score:r.score, text:text.slice(0,800)}); if(lastAudio) S.sessionAudio[id]=lastAudio; }
     $("#fb0").scrollIntoView({behavior:"smooth", block:"start"});
   };
@@ -510,7 +519,7 @@ routes.speak.after = (parts, params, main) => {
     $("#rstate").textContent="Listening…";
     Voice.play(Voice.sentences(cur().say), { voiceName: classmateVoice(), onError: toast,
       onEnd: () => {
-        if(!$("#rauto").checked){ $("#rstate").textContent="Press Start reply when ready"; return; }
+        if(!$("#rauto").checked || Voice.hasDictation){ $("#rstate").textContent="Your turn — press Start reply"; return; }
         let n=3; $("#rclock").className="timer prep"; $("#rclock").textContent=n; $("#rstate").textContent="Your turn in…";
         activeTimer=setInterval(()=>{ n--; if(n>0) $("#rclock").textContent=n; else { clearTimer(); rTalk(); } },1000);
       } });
@@ -530,6 +539,7 @@ routes.speak.after = (parts, params, main) => {
     if(!text.trim()){ $("#fb1").innerHTML=`<div class="trap">No words captured. Type or dictate your reply into the transcript box, then press <b>Check my reply</b>.</div>`; return; }
     const r=Voice.analyse(text, s>=8 ? s : text.split(/\s+/).length/2.4, c.q, "respond");
     $("#fb1").innerHTML = `<div class="classmate" style="margin:12px 0">Classmate: ${esc(c.say)}</div>` + feedbackHTML(r, c.reply, "A strong reply");
+    $("#fb1 [data-askfb]").onclick = () => askClaude(`A classmate said: "${c.say}" (about Q${c.n}: "${c.q}"). Here is my spoken reply (speech recognition transcript):\n"${text.trim()}"\nHow well did I listen and respond? Give me a stronger reply I could say.`, {q:c.n});
     if(save && text!==S.lastSaved){ S.lastSaved=text; const id=Date.now(); Voice.saveAttempt({id, at:new Date().toISOString(), mode:"respond", q:String(c.n), secs:Math.round(r.secs), wpm:r.wpm, score:r.score, text:text.slice(0,800)}); if(rAudio) S.sessionAudio[id]=rAudio; }
   };
   $("#rcheck").onclick = () => rCheck($(".tx",box1).value, rSecs, true);
@@ -539,7 +549,7 @@ routes.speak.after = (parts, params, main) => {
   const drawSh = () => { const q=QUESTIONS.find(x=>x.n===+$("#shq").value); shView=sentenceView($("#shtext"), q.spoken, {onPick:i=>runSh(i)}); $("#shtext").classList.toggle("blur", $("#shhide").checked); $("#shpos").textContent=`${shView.parts.length} sentences`; $("#shturn").hidden=true; };
   const runSh = (start=0) => {
     const mult=+$("#shgap").value;
-    Voice.play(shView.parts, { start,
+    Voice.play(shView.parts, { start, voiceName: mainVoice(),
       onSentence: i => { shIdx=i; $("#shturn").hidden=true; shView.clear(); shView.mark(i); $("#shpos").textContent=`Sentence ${i+1} / ${shView.parts.length}`; },
       gap: s => Math.max(1800, s.split(/\s+/).length*420*mult/Voice.settings.rate),
       onGap: i => { shView.mark(i,"turn"); $("#shturn").hidden=false; },
@@ -762,6 +772,170 @@ routes.sources = () => `
     <li>ID cards stating Hutu/Tutsi come from <b>Habyarimana's MRND</b> (p. 246) in this reading.</li>
     <li>p. 238 says that "most importantly" prejudice caused the genocide — be ready for this counter-argument on Q1.</li>
   </ul></div>`;
+
+// ---------- ASK CLAUDE (uses the viewer's own claude.ai account via the "sample" capability) ----------
+const ASK = { history: store.get("chat", []), lastQ: 0, pending: null, ctrl: null, busy: false, sample: undefined, readAloud: store.get("chatRead", false) };
+const ARTIFACT_URL = "https://claude.ai/artifact/1uYFqX8r64mJQVnBjufjLX";
+const hasClaude = () => !!(window.claude && typeof window.claude.use === "function");
+function getSample(){
+  if(ASK.sample !== undefined) return Promise.resolve(ASK.sample);
+  if(!hasClaude()){ ASK.sample = null; return Promise.resolve(null); }
+  return window.claude.use("sample").then(s => (ASK.sample = s || null)).catch(() => (ASK.sample = null));
+}
+function askClaude(text, opts={}){ ASK.pending = {text, send: opts.send !== false}; if(opts.q) ASK.lastQ = opts.q; if(location.hash === "#ask") go(); else location.hash = "#ask"; }
+
+let KNOWLEDGE = null;
+function knowledge(){
+  if(KNOWLEDGE) return KNOWLEDGE;
+  const ev = EVIDENCE.map(e => `${e.id} | ${caseLabel[caseOf(e)]} | ${citeShort(e)}${e.date?" | "+e.date:""} | ${e.fact}${e.quote?` | quote: "${e.quote}"`:""}`).join("\n");
+  const qs = QUESTIONS.map(q => `Q${q.n}: ${q.q}\n  Key words: ${q.keywords.map(k=>k[0]+" = "+k[1]).join("; ")}\n  Trap: ${q.trap}\n  Recommended position: ${q.position}\n  Evidence IDs: ${q.evidence.join(", ")}\n  Counter-arguments: ${q.counters.map(c=>c[0]+" -> "+c[1]).join(" || ")}`).join("\n\n");
+  const src = Object.values(SOURCES).map(s => `- ${s.short}: ${s.full}`).join("\n");
+  const bias = BIAS.map(b => `- ${b.name}: ${b.def} Example: ${b.ex}`).join("\n");
+  KNOWLEDGE = `SOURCES (the assigned readings)\n${src}\n\nTHE 8 ASSESSED QUESTIONS\n${qs}\n\nEVIDENCE BANK (verified against the readings; Rwanda page numbers are from the 'Genocide in Rwanda' chapter)\n${ev}\n\nMEDIA BIAS TYPES (class handout)\n${bias}\n\nMARKING CRITERIA\n${RUBRIC.map(r=>"- "+r[0]+": "+r[1]).join("\n")}`;
+  return KNOWLEDGE;
+}
+function systemPrompt(){
+  const q = QUESTIONS.find(x => x.n === ASK.lastQ);
+  return `You are a friendly, expert tutor helping a Monash College Foundation Year student prepare for AT5 in MUF0152 Contemporary Issues 2: a 40-minute academic group discussion (5–6 students) comparing the 1994 Rwandan Genocide and the Russia–Ukraine War. The student may bring one A4 sheet of notes. Midway, the teacher gives unseen questions with one minute to prepare.
+
+RULES
+- The teacher said: use ONLY Rwanda and Ukraine as case studies. Never suggest other case studies (no Myanmar, Srebrenica, Colombia, etc.). Class content (media bias types, non-violent action examples from class) is allowed as supporting links. Extra research should fill gaps, not add new examples.
+- Ground every factual claim in the evidence bank below. Cite like (Genocide in Rwanda, p. 250) or (ISW, 2026) or (Detector Media, 2026). Never invent facts, figures, quotes or page numbers. If something is not in the readings, say so plainly and suggest how the student could check.
+- Focus on the exact words of each question (e.g. "today", "to what extent", "short-term AND long-term", "ordinary people").
+- The student is an English-as-an-additional-language learner: use clear, simple English and short paragraphs. Spoken answers must sound natural when said aloud and last 45–75 seconds (about 110–170 words), with sources named out loud.
+- Be concise by default. Use light formatting only: **bold**, short bullet lists. No tables.
+- When asked to check or mark an answer: give a score out of 10 against the marking criteria, 2–3 specific strengths, the 2–3 most important fixes, and a short improved version.
+- When asked to quiz: ask ONE question at a time and wait for the answer, then give feedback.
+- In a mock discussion: play the teacher and three invented classmates (Sam, Priya and Leo). Write each speaker's turn on its own line starting with their name and a colon. Keep each turn to 1–3 sentences. Challenge the student's view with evidence from the readings, agree or build sometimes, and then STOP and wait for the student. Occasionally the teacher asks a follow-up or an unseen question.
+${q ? `\nThe student is currently studying Q${q.n}: "${q.q}"` : ""}
+
+${knowledge()}`;
+}
+function md(text){
+  const lines = esc(text).split(/\n/); let out = "", inList = false;
+  const inline = s => s.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|\s)\*(\S.+?\S)\*(?=\s|$|[.,;:!?])/g, "$1<i>$2</i>");
+  lines.forEach(l => {
+    const b = l.match(/^\s*(?:[-*•])\s+(.*)/);
+    if(b){ if(!inList){ out += "<ul>"; inList = true; } out += `<li>${inline(b[1])}</li>`; return; }
+    if(inList){ out += "</ul>"; inList = false; }
+    const h = l.match(/^\s*#{1,4}\s+(.*)/);
+    if(h){ out += `<p><b>${inline(h[1])}</b></p>`; return; }
+    const sp = l.match(/^(Teacher|Sam|Priya|Leo|You)\s*:\s*(.*)/);
+    if(sp){ out += `<p class="turnline"><span class="who who-${sp[1].toLowerCase()}">${sp[1]}</span> ${inline(sp[2])}</p>`; return; }
+    out += l.trim() ? `<p>${inline(l)}</p>` : "";
+  });
+  if(inList) out += "</ul>";
+  return out;
+}
+const plain = t => t.replace(/\*\*|__|#+\s/g, "").replace(/^\s*[-*•]\s+/gm, "");
+const CHIPS = [
+  ["Explain this question", q => q ? `Explain Q${q.n} simply. What is each key word really asking, and what is the best position to take?` : "Explain what AT5 is assessing and how I should prepare in the next two days."],
+  ["Quiz me", q => `Quiz me${q ? " on Q"+q.n : " on Rwanda and Ukraine"}. One question at a time, and tell me if I'm right.`],
+  ["Challenge my view", q => `Act like a classmate who disagrees with me${q ? " on Q"+q.n : ""}. Give one strong counter-argument with evidence from the readings, then wait for my reply.`],
+  ["Mock discussion", q => `Run a mock AT5 discussion. Start with the teacher asking ${q ? "Q"+q.n : "one of the 8 questions"}, then one classmate gives a short view. Then stop and wait for me. After about 6 of my turns, give me feedback against the marking criteria.`],
+  ["Check my answer", q => `Check my answer${q ? " to Q"+q.n : ""}: `, true],
+  ["Shorten my A4 line", q => q ? `Make my A4 line for Q${q.n} shorter and easier to glance at, keeping the sources and page numbers:\n${store.get("a4_"+q.n, q.a4)}` : "Help me plan what to put on my A4 note sheet.", true],
+  ["Unseen practice", () => "Give me one likely unseen question the teacher might ask. Give me 60 seconds (I'll time it myself), then I'll answer and you give feedback."]
+];
+
+routes.ask = () => {
+  const q = QUESTIONS.find(x => x.n === ASK.lastQ);
+  return `
+  <h1>Ask Claude</h1>
+  <p class="lead">Your AT5 tutor, using your own claude.ai account. It knows the 8 questions, your evidence bank and the marking criteria, and sticks to Rwanda and Ukraine.</p>
+  <div id="askAvail"></div>
+  <div class="card askcard">
+    <div class="row" style="justify-content:space-between">
+      <label class="row" style="gap:6px">About <select id="askCtx" style="width:auto">
+        <option value="0">General</option>${QUESTIONS.map(x=>`<option value="${x.n}" ${x.n===ASK.lastQ?"selected":""}>Q${x.n} · ${esc(SHORT[x.n-1])}</option>`).join("")}
+      </select></label>
+      <div class="row"><label class="check" style="margin:0"><input type="checkbox" id="askRead" ${ASK.readAloud?"checked":""}> Read replies aloud</label><button class="btn small" id="askClear">New chat</button></div>
+    </div>
+    <div class="chips" id="chips">${CHIPS.map((c,i)=>`<button class="chip" data-chip="${i}">${c[0]}</button>`).join("")}</div>
+    <div class="chat" id="chat"></div>
+    <div class="askrow">
+      <textarea id="askIn" rows="2" placeholder="Ask anything about AT5 — e.g. 'How do I answer Q4 if someone says media controls everything?'"></textarea>
+      <div class="askbtns">
+        <button class="btn" id="askMic" title="Dictate">🎙</button>
+        <button class="btn primary" id="askSend">Send</button>
+        <button class="btn" id="askStop" hidden>■ Stop</button>
+      </div>
+    </div>
+    <div class="note" id="askNote"></div>
+  </div>`;
+};
+routes.ask.after = async (parts, params, main) => {
+  const chat = $("#chat", main), input = $("#askIn", main), note = $("#askNote", main);
+  const draw = () => {
+    chat.innerHTML = ASK.history.length ? ASK.history.map((m,i) => m.role==="user"
+      ? `<div class="msg user">${esc(m.content).replace(/\n/g,"<br>")}</div>`
+      : `<div class="msg bot">${md(m.content)}<div class="msgtools"><button class="btn small" data-say="${i}">🔊</button><button class="btn small" data-cp="${i}">Copy</button></div></div>`).join("")
+      : `<div class="note" style="text-align:center;padding:24px 8px">Pick a starter above or type a question.<br>Tip: dictate your spoken answer with 🎙, then ask "Check my answer".</div>`;
+    $$("[data-say]", chat).forEach(b => b.onclick = () => speak(plain(ASK.history[+b.dataset.say].content)));
+    $$("[data-cp]", chat).forEach(b => b.onclick = () => copy(plain(ASK.history[+b.dataset.cp].content)));
+    chat.scrollTop = chat.scrollHeight;
+  };
+  draw();
+  $("#askCtx", main).onchange = e => { ASK.lastQ = +e.target.value; };
+  $("#askRead", main).onchange = e => { ASK.readAloud = e.target.checked; store.set("chatRead", ASK.readAloud); };
+  $("#askClear", main).onclick = () => { if(ASK.ctrl) ASK.ctrl.abort(); ASK.history = []; store.set("chat", []); Voice.stop(); draw(); };
+
+  // dictation into the box
+  let rec = null;
+  const mic = $("#askMic", main);
+  if(!Voice.transcriptOK) mic.hidden = true;
+  mic.onclick = () => {
+    if(rec){ rec.stop(); rec = null; mic.classList.remove("primary"); mic.textContent = "🎙"; return; }
+    const base = input.value ? input.value.trim() + " " : "";
+    rec = Voice.Recognizer((fin, inter) => { input.value = base + fin + (inter ? " " + inter : ""); },
+      st => { if(st==="blocked"){ note.textContent = "Microphone not allowed — use your keyboard's 🎤 dictation instead."; } if(st==="stopped" || st==="blocked"){ rec = null; mic.classList.remove("primary"); mic.textContent = "🎙"; } });
+    rec.start(); mic.classList.add("primary"); mic.textContent = "■";
+  };
+
+  const sample = await getSample();
+  if(!document.body.contains(chat)) return; // navigated away
+  if(!sample){
+    $("#askAvail", main).innerHTML = `<div class="trap"><b>Ask Claude works on your private claude.ai link</b>, where it uses your own Claude account. Open it here: <a href="${ARTIFACT_URL}">${ARTIFACT_URL}</a><br><span class="note">(Sign in to claude.ai. This GitHub page can't reach Claude without a separate paid API key, which would be public on a website.)</span></div>`;
+    $$("#chips button, #askSend, #askMic", main).forEach(b => b.disabled = true);
+    return;
+  }
+
+  const send = async (text) => {
+    text = (text || "").trim(); if(!text || ASK.busy) return;
+    if(rec){ rec.stop(); rec = null; mic.classList.remove("primary"); mic.textContent = "🎙"; }
+    Voice.stop(); note.textContent = "";
+    ASK.history.push({role:"user", content:text}); input.value = "";
+    ASK.history.push({role:"assistant", content:""}); draw();
+    const bubble = chat.lastElementChild;
+    ASK.busy = true; $("#askSend", main).hidden = true; $("#askStop", main).hidden = false;
+    let convo = ASK.history.slice(0, -1).slice(-20); while(convo.length && convo[0].role !== "user") convo.shift();
+    const messages = [{role:"user", content: systemPrompt()}, {role:"assistant", content:"Understood. I'll stick to Rwanda and Ukraine and the evidence bank."}, ...convo];
+    ASK.ctrl = new AbortController();
+    const last = ASK.history[ASK.history.length - 1];
+    try{
+      const res = await sample(messages, { cache:false, signal: ASK.ctrl.signal, onText: ({text}) => { last.content = text; if(document.body.contains(bubble)){ bubble.innerHTML = md(text || "Thinking…"); chat.scrollTop = chat.scrollHeight; } } });
+      last.content = res.text + (res.truncated ? "\n\n_(Reply was cut short — ask me to continue.)_" : "");
+      if(ASK.readAloud && document.body.contains(chat)) speak(plain(res.text).slice(0, 1800));
+    }catch(e){
+      const code = e && e.code;
+      if(code === "aborted" || (e && e.name === "AbortError")) last.content = (last.content || "") + "\n\n_(Stopped.)_";
+      else if(code === "not_granted"){ ASK.history.splice(-2); note.textContent = "Claude access wasn't allowed. Press Send again and choose Allow when asked."; }
+      else if(code === "rate_limited"){ ASK.history.splice(-2); input.value = text; note.textContent = "Claude is busy or you've hit a usage limit — wait a minute, then press Send again."; }
+      else { if(e && e.text) last.content = e.text; else ASK.history.splice(-2); input.value = input.value || text; note.textContent = "Something went wrong: " + ((e && e.message) || "please try again."); }
+    }
+    ASK.busy = false; ASK.ctrl = null;
+    store.set("chat", ASK.history.slice(-40));
+    if(document.body.contains(chat)){ $("#askSend", main).hidden = false; $("#askStop", main).hidden = true; draw(); }
+  };
+  $("#askSend", main).onclick = () => send(input.value);
+  $("#askStop", main).onclick = () => { if(ASK.ctrl) ASK.ctrl.abort(); };
+  input.onkeydown = e => { if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); send(input.value); } };
+  $$("[data-chip]", main).forEach(b => b.onclick = () => {
+    const c = CHIPS[+b.dataset.chip], q = QUESTIONS.find(x => x.n === ASK.lastQ), txt = c[1](q);
+    if(c[2]){ input.value = txt; input.focus(); input.setSelectionRange(txt.length, txt.length); } else send(txt);
+  });
+  if(ASK.pending){ const p = ASK.pending; ASK.pending = null; if(p.send) send(p.text); else { input.value = p.text; input.focus(); } }
+};
 
 // ---------- SEARCH ----------
 function buildIndex(){

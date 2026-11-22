@@ -7,6 +7,21 @@ const Voice = (function(){
     set(k,v){ try{ localStorage.setItem("at5v:"+k, JSON.stringify(v)); }catch(e){} }
   };
 
+  // ---------- claude.ai capabilities (only on the private claude.ai link) ----------
+  const cap = { tts:null, dictation:null };
+  const CLAUDE_VOICES = [["claude:buttery","Claude — Buttery"],["claude:airy","Claude — Airy"],["claude:glassy","Claude — Glassy"],["claude:rounded","Claude — Rounded"]];
+  if(typeof window!=="undefined" && window.claude && typeof window.claude.use==="function"){
+    window.claude.use("tts").then(t => { if(t){ cap.tts=t; listeners.forEach(f=>f()); } }).catch(()=>{});
+    window.claude.use("dictation").then(d => { if(d){ cap.dictation=d; wireDictation(d); listeners.forEach(f=>f()); } }).catch(()=>{});
+  }
+  // dictation events are registered once and routed to whichever Recognizer is active
+  let dictSink = null;
+  function wireDictation(d){
+    d.onPartial(({text}) => dictSink && dictSink.partial(text));
+    d.onFinal(({text}) => dictSink && dictSink.final(text));
+    d.onState(({state, reason}) => dictSink && dictSink.state(state, reason));
+  }
+
   // ---------- read-aloud ----------
   const hasTTS = typeof window !== "undefined" && "speechSynthesis" in window;
   let voices = [];
@@ -22,6 +37,8 @@ const Voice = (function(){
   const listeners = [];
   const onVoices = f => listeners.push(f);
   const pickVoice = (name) => voices.find(v=>v.name===name) || voices[0] || null;
+  const voiceList = () => (cap.tts ? CLAUDE_VOICES.map(([id,label])=>({name:id, label, lang:"Claude"})) : []).concat(voices.map(v=>({name:v.name, label:v.name+" ("+v.lang+")", lang:v.lang})));
+  const isClaudeVoice = name => !!(cap.tts && name && name.indexOf("claude:")===0);
   function setSetting(k,v){ settings[k]=v; LS.set(k,v); }
 
   function sentences(text){
@@ -33,6 +50,8 @@ const Voice = (function(){
   let job = null;
   function play(parts, opts={}){
     stop();
+    const vname = opts.voiceName || settings.voice;
+    if(isClaudeVoice(vname)) return playClaude(parts, opts, vname.slice(7));
     if(!hasTTS){ opts.onError && opts.onError("Read-aloud isn't supported in this browser."); return null; }
     const my = job = { i: opts.start||0, parts, paused:false, cancelled:false, gapTimer:null };
     const next = () => {
@@ -55,9 +74,32 @@ const Voice = (function(){
     next();
     return my;
   }
-  function stop(){ if(job){ job.cancelled=true; clearTimeout(job.gapTimer); job=null; } if(hasTTS) speechSynthesis.cancel(); }
-  function pause(){ if(hasTTS && job){ speechSynthesis.pause(); job.paused=true; } }
-  function resume(){ if(hasTTS && job){ speechSynthesis.resume(); job.paused=false; } }
+  // Claude voice: one sentence per call so highlighting and shadowing pauses work
+  function playClaude(parts, opts, voice){
+    const my = job = { i: opts.start||0, parts, paused:false, cancelled:false, gapTimer:null, claude:true };
+    const rate = Math.min(1.5, Math.max(0.7, opts.rate || settings.rate));
+    (async () => {
+      while(!my.cancelled && job===my && my.i < parts.length){
+        const idx = my.i;
+        opts.onSentence && opts.onSentence(idx);
+        try{ await cap.tts.speak(parts[idx].replace(/[“”"]/g,""), {voice, rate, language:"en"}); }
+        catch(e){
+          if(my.cancelled || job!==my) return;
+          if(e && (e.code==="not_granted" || e.code==="busy" || e.code==="rate_limited")){ opts.onError && opts.onError(e.code==="busy" ? "Stop dictation first, then play." : e.code==="rate_limited" ? "Claude voice is busy — wait a moment." : "Claude voice is turned off — choose another voice."); job=null; return; }
+          job=null; return; // viewer stopped it
+        }
+        if(my.cancelled || job!==my) return;
+        my.i++;
+        const gap = opts.gap ? opts.gap(parts[idx], idx) : 0;
+        if(gap>0 && my.i<parts.length){ opts.onGap && opts.onGap(idx, gap); await new Promise(r => my.gapTimer = setTimeout(r, gap)); }
+      }
+      if(!my.cancelled && job===my){ job=null; opts.onEnd && opts.onEnd(); }
+    })();
+    return my;
+  }
+  function stop(){ const wasClaude = job && job.claude; if(job){ job.cancelled=true; clearTimeout(job.gapTimer); job=null; } if(hasTTS) speechSynthesis.cancel(); if(cap.tts && wasClaude){ try{ cap.tts.stop(); }catch(e){} } }
+  function pause(){ if(!job) return; if(job.claude){ try{ cap.tts.pause(); }catch(e){} } else if(hasTTS) speechSynthesis.pause(); job.paused=true; }
+  function resume(){ if(!job) return; if(job.claude){ try{ cap.tts.resume(); }catch(e){} } else if(hasTTS) speechSynthesis.resume(); job.paused=false; }
   const isPaused = () => !!(job && job.paused);
   const isPlaying = () => !!job;
 
@@ -65,6 +107,7 @@ const Voice = (function(){
   const SR = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
   function Recognizer(onText, onState){
     let rec=null, active=false, finalText="", restarts=0;
+    if(cap.dictation) return DictationRecognizer(onText, onState);
     function start(){
       if(!SR){ onState("unsupported"); return false; }
       finalText=""; active=true; restarts=0; make(); return true;
@@ -89,6 +132,23 @@ const Voice = (function(){
     }
     function stopRec(){ active=false; try{ rec && rec.stop(); }catch(e){} }
     return { start, stop: stopRec, get text(){ return finalText; }, get active(){ return active; } };
+  }
+
+  // claude.ai dictation (works inside the private link, Chromium browsers + desktop app). start() must run straight from a click.
+  function DictationRecognizer(onText, onState){
+    let finalText="", active=false;
+    const sink = {
+      partial: t => onText(finalText, t),
+      final: t => { finalText += (finalText?" ":"") + t.trim(); onText(finalText, ""); },
+      state: (s, reason) => { if(s==="listening") onState("listening"); else if(s==="idle"){ active=false; onState("stopped"); } }
+    };
+    function start(){
+      finalText=""; active=true; dictSink=sink;
+      cap.dictation.start().catch(e => { active=false; onState(e && e.code==="not_granted" ? "blocked" : "needs-click"); });
+      return true;
+    }
+    async function stopD(){ if(!active) return; active=false; try{ await cap.dictation.stop(); }catch(e){} }
+    return { start, stop: stopD, get text(){ return finalText; }, get active(){ return active; }, dictation:true };
   }
 
   // ---------- recording ----------
@@ -173,7 +233,7 @@ const Voice = (function(){
   const attempts = () => LS.get("attempts",[]);
   function clearAttempts(){ LS.set("attempts",[]); }
 
-  return { hasTTS, hasSR: !!SR, hasRec: typeof window!=="undefined" && !!(navigator.mediaDevices && window.MediaRecorder),
+  return { cap, voiceList, isClaudeVoice, get hasDictation(){ return !!cap.dictation; }, get transcriptOK(){ return !!(SR || cap.dictation); }, hasTTS, hasSR: !!SR, hasRec: typeof window!=="undefined" && !!(navigator.mediaDevices && window.MediaRecorder),
     settings, setSetting, loadVoices, onVoices, voices: () => voices, sentences, play, stop, pause, resume, isPaused, isPlaying,
     Recognizer, Recorder, analyse, keyTerms, saveAttempt, attempts, clearAttempts };
 })();
