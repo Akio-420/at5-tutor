@@ -461,8 +461,9 @@ routes.speak.after = (parts, params, main) => {
   let stopper=null, t0=0, secs=0, lastAudio=null;
   const talk = async () => {
     clearTimer(); clock.className="timer talk"; st.textContent="Speak now — aim for 45–75 seconds";
-    stopper = await startCapture(box0, {transcript:$("#optTx").checked, record:$("#optRec").checked});
-    t0=Date.now();
+    t0=Date.now(); secs=0;
+    const pending = startCapture(box0, {transcript:$("#optTx").checked, record:$("#optRec").checked});
+    stopper = async () => (await pending)();
     activeTimer=setInterval(()=>{ secs=(Date.now()-t0)/1000; clock.textContent=fmtT(secs); bar.style.width=Math.min(100,secs/75*100)+"%";
       if(secs>=45 && secs<75) st.textContent="✓ In the target range — finish your point";
       if(secs>=75){ clock.className="timer over"; st.textContent="Over 75 seconds — wrap up now"; }
@@ -510,8 +511,9 @@ routes.speak.after = (parts, params, main) => {
   $("#rnext").onclick = () => { stopRec(); clearTimer(); Voice.stop(); rStopper=null; ri=(ri+1)%order.length; drawR(); };
   const rTalk = async () => {
     clearTimer(); $("#rclock").className="timer talk"; $("#rstate").textContent="Reply now: acknowledge → evidence → your view";
-    rStopper = await startCapture(box1, {transcript:true, record:true});
-    const s0=Date.now();
+    const s0=Date.now(); rSecs=0;
+    const pending = startCapture(box1, {transcript:true, record:Voice.hasRec});
+    rStopper = async () => (await pending)();
     activeTimer=setInterval(()=>{ rSecs=(Date.now()-s0)/1000; $("#rclock").textContent=fmtT(rSecs); if(rSecs>=45){ $("#rclock").className="timer over"; $("#rstate").textContent="Wrap up — replies should be short"; } if(rSecs>=90) rFinish(); },200);
   };
   $("#rplay").onclick = () => {
@@ -870,12 +872,13 @@ routes.ask.after = async (parts, params, main) => {
     chat.innerHTML = ASK.history.length ? ASK.history.map((m,i) => m.role==="user"
       ? `<div class="msg user">${esc(m.content).replace(/\n/g,"<br>")}</div>`
       : `<div class="msg bot">${md(m.content)}<div class="msgtools"><button class="btn small" data-say="${i}">🔊</button><button class="btn small" data-cp="${i}">Copy</button></div></div>`).join("")
-      : `<div class="note" style="text-align:center;padding:24px 8px">Pick a starter above or type a question.<br>Tip: dictate your spoken answer with 🎙, then ask "Check my answer".</div>`;
+      : `<div class="note" style="text-align:center;padding:24px 8px">Pick a starter above or type a question.<br>The first time, claude.ai asks to <b>Allow use of Claude</b> — press Allow.<br>Tip: dictate your spoken answer with 🎙, then ask "Check my answer".</div>`;
     $$("[data-say]", chat).forEach(b => b.onclick = () => speak(plain(ASK.history[+b.dataset.say].content)));
     $$("[data-cp]", chat).forEach(b => b.onclick = () => copy(plain(ASK.history[+b.dataset.cp].content)));
     chat.scrollTop = chat.scrollHeight;
   };
   draw();
+  setTimeout(() => { const r=$(".askrow", main); if(r && r.getBoundingClientRect().bottom > window.innerHeight) r.scrollIntoView({block:"end"}); }, 50);
   $("#askCtx", main).onchange = e => { ASK.lastQ = +e.target.value; };
   $("#askRead", main).onchange = e => { ASK.readAloud = e.target.checked; store.set("chatRead", ASK.readAloud); };
   $("#askClear", main).onclick = () => { if(ASK.ctrl) ASK.ctrl.abort(); ASK.history = []; store.set("chat", []); Voice.stop(); draw(); };
@@ -894,6 +897,11 @@ routes.ask.after = async (parts, params, main) => {
 
   const sample = await getSample();
   if(!document.body.contains(chat)) return; // navigated away
+  if(!sample && hasClaude()){
+    $("#askAvail", main).innerHTML = `<div class="trap"><b>Ask Claude isn't available in this view</b> (the Claude phone/tablet app doesn't allow it yet). Open the same link in <b>Safari or Chrome</b> and sign in to claude.ai: <a href="${ARTIFACT_URL}">${ARTIFACT_URL}</a></div>`;
+    $$("#chips button, #askSend, #askMic", main).forEach(b => b.disabled = true);
+    return;
+  }
   if(!sample){
     $("#askAvail", main).innerHTML = `<div class="trap"><b>Ask Claude works on your private claude.ai link</b>, where it uses your own Claude account. Open it here: <a href="${ARTIFACT_URL}">${ARTIFACT_URL}</a><br><span class="note">(Sign in to claude.ai. This GitHub page can't reach Claude without a separate paid API key, which would be public on a website.)</span></div>`;
     $$("#chips button, #askSend, #askMic", main).forEach(b => b.disabled = true);

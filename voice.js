@@ -7,6 +7,8 @@ const Voice = (function(){
     set(k,v){ try{ localStorage.setItem("at5v:"+k, JSON.stringify(v)); }catch(e){} }
   };
 
+  const inFrame = (() => { try{ return window.self !== window.top; }catch(e){ return true; } })();
+
   // ---------- claude.ai capabilities (only on the private claude.ai link) ----------
   const cap = { tts:null, dictation:null };
   const CLAUDE_VOICES = [["claude:buttery","Claude — Buttery"],["claude:airy","Claude — Airy"],["claude:glassy","Claude — Glassy"],["claude:rounded","Claude — Rounded"]];
@@ -109,7 +111,7 @@ const Voice = (function(){
     let rec=null, active=false, finalText="", restarts=0;
     if(cap.dictation) return DictationRecognizer(onText, onState);
     function start(){
-      if(!SR){ onState("unsupported"); return false; }
+      if(!SR || inFrame){ onState("unsupported"); return false; }
       finalText=""; active=true; restarts=0; make(); return true;
     }
     function make(){
@@ -156,7 +158,10 @@ const Voice = (function(){
     let mr=null, stream=null, chunks=[], t0=0, ctx=null, an=null, buf=null;
     async function start(){
       if(!navigator.mediaDevices || !window.MediaRecorder) throw new Error("unsupported");
-      stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
+      stream = await Promise.race([
+        navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}}),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 4000))
+      ]);
       chunks=[]; mr=new MediaRecorder(stream); mr.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
       mr.start(); t0=Date.now();
       try{ const AC=window.AudioContext||window.webkitAudioContext; ctx=new AC(); const src=ctx.createMediaStreamSource(stream); an=ctx.createAnalyser(); an.fftSize=512; src.connect(an); buf=new Uint8Array(an.fftSize); }catch(e){ an=null; }
@@ -233,7 +238,7 @@ const Voice = (function(){
   const attempts = () => LS.get("attempts",[]);
   function clearAttempts(){ LS.set("attempts",[]); }
 
-  return { cap, voiceList, isClaudeVoice, get hasDictation(){ return !!cap.dictation; }, get transcriptOK(){ return !!(SR || cap.dictation); }, hasTTS, hasSR: !!SR, hasRec: typeof window!=="undefined" && !!(navigator.mediaDevices && window.MediaRecorder),
+  return { cap, voiceList, isClaudeVoice, get hasDictation(){ return !!cap.dictation; }, get transcriptOK(){ return !!((SR && !inFrame) || cap.dictation); }, inFrame, hasTTS, hasSR: !!SR && !inFrame, hasRec: typeof window!=="undefined" && !inFrame && !!(navigator.mediaDevices && window.MediaRecorder),
     settings, setSetting, loadVoices, onVoices, voices: () => voices, sentences, play, stop, pause, resume, isPaused, isPlaying,
     Recognizer, Recorder, analyse, keyTerms, saveAttempt, attempts, clearAttempts };
 })();
