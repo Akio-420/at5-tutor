@@ -81,13 +81,14 @@ function sentenceView(el, text, {hideWords=false, onPick}={}){
 Voice.onVoices(() => { $$(".vbar").forEach(bar => { const holder=bar.parentNode; const withC=!!$("[data-vset=voice2]",bar); const tmp=document.createElement("div"); tmp.innerHTML=voiceBar(withC); holder.replaceChild(tmp.firstElementChild, bar); bindVoiceBar(holder); }); });
 
 // ---------- timers ----------
+let mockCleanup = function(){};
 let activeTimer = null;
 function clearTimer(){ if(activeTimer){ clearInterval(activeTimer); activeTimer=null; } }
 
 // ---------- router ----------
 const routes = {};
 function go(){
-  stopSpeak(); clearTimer(); stopRec();
+  stopSpeak(); clearTimer(); stopRec(); mockCleanup(); mockState=null;
   const rs = $("#results"); if(rs){ rs.classList.remove("show"); const si=$("#search"); if(si) si.value=""; }
   // Plain hashes only (e.g. #q-3, #speak-u2, #evidence-R25, #flash-nums) so the page works on GitHub Pages and claude.ai
   const h = location.hash.replace(/^#\/?/,"") || "home";
@@ -107,7 +108,7 @@ function go(){
   bindCopy(main);
   $$("nav.side a").forEach(a => { const href=a.getAttribute("href"); a.classList.toggle("active", href==="#"+h || href==="#"+key); });
   $("nav.side").classList.remove("open");
-  const fab=$("#askfab"); if(fab) fab.classList.toggle("hide", key==="ask");
+  const fab=$("#askfab"); if(fab) fab.classList.toggle("hide", key==="ask"||key==="mock");
   navDots();
   if(!params.get("focus")) window.scrollTo(0,0);
 }
@@ -136,6 +137,7 @@ routes.home = () => {
       <li><b>Say it out loud</b> on <a href="#speak">Voice practice</a>: live transcript and instant feedback, replying to a classmate's challenge, and shadowing the model answers.</li>
       <li><b>Prepare for push-back</b>: every question has replies for when another student disagrees.</li>
       <li><b>Drill the unseen questions</b> with the 1-minute prep timer, like the real thing.</li>
+      <li><b>Test yourself</b> with a <a href="#mock">Mock exam</a>: a timed 40-minute discussion with prepared and unseen questions, challenges, and scoring. Run it as often as you like.</li>
       <li><b>Lock in facts</b> with <a href="#flash">Flashcards</a> and the <a href="#quiz">Quiz</a>.</li>
       <li><b>Build and print your A4 sheet</b> on the <a href="#a4">A4 sheet</a> page.</li>
     </ol>
@@ -616,6 +618,196 @@ routes.unseen.after = (parts, params, main) => {
   $("#uangle").onclick=()=>{ $("#uans").textContent=UNSEEN[order[idx]].angle; $("#uans").style.display="block"; };
   $("#ustart").onclick=()=>{ clearTimer(); const t0=Date.now(); activeTimer=setInterval(()=>{ const left=Math.max(0,60-(Date.now()-t0)/1000); $("#uclock").textContent=`0:${String(Math.ceil(left)).padStart(2,"0")}`.replace("0:60","1:00"); if(left<=0){ clearTimer(); $("#uclock").className="timer over"; $("#uclock").textContent="Speak!"; } },200); };
 };
+
+// ---------- MOCK EXAM ----------
+const MOCK_CFG = {
+  full:  {label:"Full mock", mins:40, pre:4, unseen:2, last:1, introS:120, preS:270, upS:60, utS:360, lastS:240, closeS:120},
+  short: {label:"Short mock", mins:19, pre:2, unseen:1, last:1, introS:60,  preS:240, upS:60, utS:300, lastS:180, closeS:60},
+  quick: {label:"Quick mock", mins:10, pre:1, unseen:1, last:0, introS:30,  preS:240, upS:60, utS:240, lastS:0,   closeS:30}
+};
+const TALLY = [["sources","Source named out loud"],["both","Used BOTH Rwanda and Ukraine"],["direct","Answered a challenge directly"],["held","Held view under challenge"],["invite","Asked a question / invited me in"],["read","Read from the sheet word for word"]];
+let mockState = null;
+const fmt = s => { s=Math.max(0,Math.round(s)); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); };
+const clean = t => String(t).replace(/^["“]+|["”]+$/g,"");
+function beep(f=880, d=0.18){ try{ const C=window.AudioContext||window.webkitAudioContext; if(!C) return; const a=new C(), o=a.createOscillator(), g=a.createGain(); o.frequency.value=f; g.gain.value=0.08; o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime+d); setTimeout(()=>a.close&&a.close(),400); }catch(e){} }
+function mockPick(n){ // least-used prepared questions first, random tie-break
+  const cnt=store.get("mockQCount",{});
+  return shuffle(QUESTIONS.slice()).sort((a,b)=>(cnt[a.n]||0)-(cnt[b.n]||0)).slice(0,n);
+}
+function mockPickUnseen(n){ // fresh and never-used first
+  const used=store.get("mockUnseenUsed",[]);
+  const idx=shuffle(UNSEEN.map((_,i)=>i));
+  idx.sort((a,b)=>((used.includes(a)?2:0)+(UNSEEN[a].fresh?0:1))-((used.includes(b)?2:0)+(UNSEEN[b].fresh?0:1)));
+  return idx.slice(0,n);
+}
+function mockPlan(key){
+  const c=MOCK_CFG[key]; const qs=shuffle(mockPick(c.pre+c.last)); const us=mockPickUnseen(c.unseen);
+  const plan=[{kind:"intro",secs:c.introS,title:"Settle in",text:"Note sheet on the desk. Phone away. When the clock reaches the first question, begin. Cite your sources out loud."}];
+  qs.slice(0,c.pre).forEach((q,i)=>plan.push({kind:"pre",secs:c.preS,title:"Prepared question "+(i+1),q}));
+  us.forEach((ui,i)=>{ const u=UNSEEN[ui]; plan.push({kind:"unprep",secs:c.upS,title:"Unseen question "+(i+1)+" — 1 minute to prepare",u,ui}); plan.push({kind:"unseen",secs:c.utS,title:"Unseen question "+(i+1)+" — discussion",u,ui}); });
+  if(c.last) plan.push({kind:"pre",secs:c.lastS,title:"Final prepared question",q:qs[c.pre]});
+  plan.push({kind:"close",secs:c.closeS,title:"Closing view",text:"Give your closing view in 30 seconds: what do you now think, and why? Then stop."});
+  return plan;
+}
+routes.mock = () => {
+  const hist = store.get("mockHistory",[]).slice(0,5);
+  const avg = h => { const v=Object.values(h.scores||{}).filter(Boolean); return v.length ? (v.reduce((a,b)=>a+b,0)/v.length).toFixed(1) : "–"; };
+  return `
+  <h1>Mock exam</h1>
+  <p class="lead">Practise the real AT5 discussion as many times as you like. Each run picks different questions (the ones you've practised least) and different unseen questions.</p>
+  <div class="card">
+    <h3 style="margin-top:0">1. Who is the examiner?</h3>
+    <label class="mopt"><input type="radio" name="mmode" value="solo" checked> <span><b>Solo — the app is the teacher.</b> It reads each question, then speaks a challenge, a follow-up and a request for your source while you talk.</span></label>
+    <label class="mopt"><input type="radio" name="mmode" value="partner"> <span><b>With a partner.</b> Your partner holds this screen. They see the question, tap the challenge buttons (the app speaks them too, if turned on), and tally your score.</span></label>
+    <h3>2. How long?</h3>
+    ${Object.entries(MOCK_CFG).map(([k,c],i)=>`<label class="mopt"><input type="radio" name="mlen" value="${k}" ${i===0?"checked":""}> <span><b>${c.label} — ${c.mins} min.</b> ${c.pre+c.last} prepared question${c.pre+c.last>1?"s":""} + ${c.unseen} unseen${c.unseen>1?" (1 min prep each)":" (1 min prep)"}.${k==="full"?" Same as the real thing.":""}</span></label>`).join("")}
+    <h3>3. Options</h3>
+    <label class="check"><input type="checkbox" id="mauto" checked> Move on automatically when time is up</label>
+    <label class="check"><input type="checkbox" id="mspeak" checked> Speak the questions and challenges aloud</label>
+    <div class="note" style="margin:8px 0">Rules: one A4 note sheet only. Phone away. Stay on this page — leaving it ends the mock. Say your sources out loud (“According to the chapter Genocide in Rwanda, page 250…”).</div>
+    <div class="row"><button class="btn primary" id="mstart">Start mock</button></div>
+  </div>
+  ${hist.length?`<h2>Your last mocks</h2>${hist.map(h=>`<div class="ev"><div class="meta"><b>${esc(h.date)}</b><span>· ${esc(h.label)} · ${h.mode==="solo"?"solo":"partner"} · average score ${avg(h)}/4</span></div>${h.fix?`<div class="note">Fix next time: ${esc(h.fix)}</div>`:""}</div>`).join("")}`:""}`;
+};
+routes.mock.after = (parts, params, main) => {
+  $("#mstart").onclick = () => {
+    const mode=$("input[name=mmode]:checked").value, len=$("input[name=mlen]:checked").value;
+    startMock(main, {mode, len, auto:$("#mauto").checked, speak:$("#mspeak").checked});
+  };
+};
+function mockSay(text){ if(!mockState || !mockState.cfg.speak) return; Voice.stop(); Voice.play(Voice.sentences(clean(text)), {voiceName: classmateVoice(), onError: toast}); }
+function startMock(main, cfg){
+  const plan=mockPlan(cfg.len);
+  const cnt=store.get("mockQCount",{}); plan.filter(s=>s.kind==="pre").forEach(s=>cnt[s.q.n]=(cnt[s.q.n]||0)+1); store.set("mockQCount",cnt);
+  const used=store.get("mockUnseenUsed",[]); plan.filter(s=>s.kind==="unprep").forEach(s=>{ if(!used.includes(s.ui)) used.push(s.ui); }); store.set("mockUnseenUsed",used);
+  mockState={cfg, plan, i:0, stepMs:0, totalMs:0, paused:false, fired:{}, cc:0, fc:0, sc:0, qc:0, cmp:0, tally:Object.fromEntries(TALLY.map(t=>[t[0],0])), startedAt:Date.now(), lock:null};
+  mockCleanup = () => { try{ mockState && mockState.lock && mockState.lock.release(); }catch(e){} if(mockState) mockState.lock=null; };
+  try{ navigator.wakeLock && navigator.wakeLock.request("screen").then(l=>{ if(mockState) mockState.lock=l; }).catch(()=>{}); }catch(e){}
+  const total=plan.reduce((a,s)=>a+s.secs,0); mockState.total=total;
+  main.innerHTML = `
+  <h1>Mock exam <span class="note" style="font-size:.9rem">· ${esc(MOCK_CFG[cfg.len].label)} · ${cfg.mode==="solo"?"solo":"with partner"}</span></h1>
+  <div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div><div class="note">Overall</div><div class="mclock" id="mtotal">0:00 / ${fmt(total)}</div></div>
+      <div class="row"><button class="btn" id="mpause">Pause</button><button class="btn" id="mnext">Next ▶</button><button class="btn" id="mstop">End &amp; score</button></div>
+    </div>
+    <div class="mbar"><div id="mfill"></div></div>
+  </div>
+  <div class="card">
+    <div class="note" id="mstep"></div>
+    <div class="qtext" id="mq"></div>
+    <div class="timer prep" id="mclock">0:00</div>
+    <div class="note" id="mhint" style="text-align:center"></div>
+  </div>
+  <div class="card" id="mtools">
+    <h3 style="margin-top:0">Examiner</h3>
+    <div class="says" id="msays">Tap a button, or wait: in solo mode the app speaks for you.</div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn small" data-m="read">🔊 Read question</button>
+      <button class="btn small" data-m="challenge">⚔ Challenge</button>
+      <button class="btn small" data-m="follow">➕ Follow-up</button>
+      <button class="btn small" data-m="source">📖 Source?</button>
+      <button class="btn small" data-m="clarity">❓ Explain simply</button>
+      <button class="btn small" data-m="compare">⚖ Compare cases</button>
+      ${cfg.mode==="partner"?`<button class="btn small" data-m="guide">📋 Answer guide</button>`:""}
+    </div>
+    <div class="position" id="mguide" style="display:none;margin-top:8px"></div>
+  </div>
+  ${cfg.mode==="partner"?`<div class="card"><h3 style="margin-top:0">Tally (partner taps)</h3><div class="tallyrow">${TALLY.map(([k,l])=>`<button class="btn small" data-t="${k}">${esc(l)} <b id="t_${k}">0</b></button>`).join("")}</div></div>`:""}
+  <details class="card"><summary><b>Schedule</b></summary><ol id="mladder" class="ladder"></ol></details>`;
+  $("#mpause").onclick = () => { mockState.paused=!mockState.paused; $("#mpause").textContent = mockState.paused?"Resume":"Pause"; if(mockState.paused) Voice.stop(); };
+  $("#mnext").onclick = () => nextStep();
+  $("#mstop").onclick = () => { if(confirm("End the mock and go to scoring?")) finishMock(main); };
+  $$("[data-m]", main).forEach(b => b.onclick = () => examiner(b.dataset.m));
+  $$("[data-t]", main).forEach(b => b.onclick = () => { const k=b.dataset.t; mockState.tally[k]++; $("#t_"+k).textContent=mockState.tally[k]; });
+  mockState.main = main;
+  startStep();
+  let last=performance.now();
+  clearTimer();
+  activeTimer = setInterval(() => {
+    const now=performance.now(), dt=now-last; last=now;
+    const M=mockState; if(!M) return; if(M.paused) return;
+    M.stepMs+=dt; M.totalMs+=dt;
+    const s=M.plan[M.i], dur=s.secs*1000;
+    tickDraw();
+    // scheduled solo prompts
+    if(M.cfg.mode==="solo" && (s.kind==="pre"||s.kind==="unseen")){
+      [[0.33,"challenge"],[0.6,"follow"],[0.82,"source"]].forEach(([at,type]) => { const key=M.i+type; if(!M.fired[key] && M.stepMs>=dur*at){ M.fired[key]=1; examiner(type); } });
+    }
+    if(M.stepMs>=dur && !M.fired[M.i+"end"]){ M.fired[M.i+"end"]=1; beep(660,0.3); if(M.cfg.auto) nextStep(); else { $("#mhint").textContent="Time is up — tap Next to move on."; } }
+  }, 250);
+}
+function stepText(s){ return s.q ? s.q.q : s.u ? s.u.q : s.text; }
+function startStep(){
+  const M=mockState, s=M.plan[M.i]; M.stepMs=0; Voice.stop();
+  $("#mstep").textContent = `Step ${M.i+1} of ${M.plan.length} · ${s.title}`;
+  $("#mq").textContent = stepText(s);
+  $("#mhint").textContent = s.kind==="unprep" ? "Think silently. You may jot on your note sheet." : s.kind==="pre" ? "Give your answer first (about a minute), then respond to the challenge." : s.kind==="unseen" ? "Discuss. Name your sources." : "";
+  $("#mclock").className = "timer " + ((s.kind==="pre"||s.kind==="unseen")?"talk":"prep");
+  $("#msays").textContent = "—"; $("#mguide").style.display="none";
+  $("#mladder").innerHTML = M.plan.map((p,i)=>`<li class="${i===M.i?"cur":i<M.i?"done":""}">${esc(p.title)} <span class="note">· ${fmt(p.secs)}</span></li>`).join("");
+  tickDraw(); beep(880,0.12);
+  setTimeout(()=>{ if(mockState===M && M.plan[M.i]===s) mockSay(s.kind==="intro"?"Welcome. This is a practice discussion. Please cite your sources out loud. Ready? Let's begin shortly.":s.kind==="close"?"Please give your closing view in thirty seconds.":s.kind==="unseen"?"Your preparation time is over. Please begin.":stepText(s)); }, 350);
+}
+function tickDraw(){
+  const M=mockState; if(!M) return; const s=M.plan[M.i], left=s.secs-M.stepMs/1000;
+  const c=$("#mclock"); if(!c) return;
+  c.textContent = left>=0 ? fmt(Math.ceil(left)) : "+"+fmt(-left);
+  if(left<0) c.className="timer over";
+  $("#mtotal").textContent = `${fmt(M.totalMs/1000)} / ${fmt(M.total)}`;
+  $("#mfill").style.width = Math.min(100, M.totalMs/1000/M.total*100)+"%";
+}
+function nextStep(){
+  const M=mockState; if(!M) return;
+  if(M.i>=M.plan.length-1){ finishMock(M.main); return; }
+  M.i++; M.stepMs=0; startStep();
+}
+function examiner(type){
+  const M=mockState; if(!M) return; const s=M.plan[M.i]; const isPre=s.kind==="pre";
+  let label="", line="";
+  if(type==="read"){ label="Question"; line=stepText(s); }
+  else if(type==="challenge"){ label="Challenge"; line = isPre && s.q.counters.length ? clean(s.q.counters[M.cc++ % s.q.counters.length][0]) : MOCK.challenge[M.cc++ % MOCK.challenge.length]; if(isPre) line="I disagree. "+line; }
+  else if(type==="follow"){ label="Follow-up"; line = isPre ? MOCK.follow[s.q.n] : MOCK.followUnseen[M.fc++ % MOCK.followUnseen.length]; }
+  else if(type==="source"){ label="Source?"; line=MOCK.source[M.sc++ % MOCK.source.length]; }
+  else if(type==="clarity"){ label="Clarify"; line=MOCK.clarity[M.qc++ % MOCK.clarity.length]; }
+  else if(type==="compare"){ label="Compare"; line=MOCK.compare[M.cmp++ % MOCK.compare.length]; }
+  else if(type==="guide"){
+    const g=$("#mguide"); if(g.style.display==="block"){ g.style.display="none"; return; }
+    g.innerHTML = isPre ? `<b>Position:</b> ${esc(s.q.position)}<br><b>Listen for:</b> ${s.q.evidence.slice(0,4).map(id=>EVI[id]).filter(Boolean).map(e=>esc(citeShort(e))+" — "+esc(e.fact)).join("<br>• ").replace(/^/,"• ")}` : (s.u ? `<b>Good answers include:</b> ${esc(s.u.angle)}` : "No guide for this step.");
+    g.style.display="block"; return;
+  }
+  $("#msays").innerHTML = `<b>${esc(label)}:</b> ${esc(line)}`;
+  mockSay(line);
+}
+function finishMock(main){
+  const M=mockState; clearTimer(); Voice.stop(); mockCleanup(); beep(520,0.4);
+  const used=M.plan.filter(s=>s.kind==="pre"); const us=M.plan.filter(s=>s.kind==="unprep");
+  const scores={};
+  main.innerHTML = `
+  <h1>Mock finished 🎉</h1>
+  <p class="lead">Time used: <b>${fmt(M.totalMs/1000)}</b> of ${fmt(M.total)}. Score yourself (or have your partner score you) while it's fresh. 1 = not yet, 2 = developing, 3 = good, 4 = strong. This is practice only — check the real rubric on Moodle too.</p>
+  <div class="card"><h3 style="margin-top:0">Scores</h3>
+  ${RUBRIC.map(([n,d],i)=>`<div class="scorerow"><div><b>${esc(n)}</b><div class="note">${esc(d)}</div></div><div class="row">${[1,2,3,4].map(v=>`<button class="btn small sc" data-i="${i}" data-v="${v}">${v}</button>`).join("")}</div></div>`).join("")}
+  </div>
+  ${M.cfg.mode==="partner"?`<div class="card"><h3 style="margin-top:0">Tally</h3>${TALLY.map(([k,l])=>`<div class="row" style="justify-content:space-between"><span>${esc(l)}</span><b>${M.tally[k]}</b></div>`).join("")}</div>`:""}
+  <div class="card"><h3 style="margin-top:0">Self-review</h3>
+    <label class="f">Which answer was strongest, and why?</label><textarea id="r1"></textarea>
+    <label class="f">Where did you lose the thread or go quiet?</label><textarea id="r2"></textarea>
+    <label class="f">One thing to fix before the real discussion</label><textarea id="r3"></textarea>
+    <div class="row" style="margin-top:8px"><button class="btn primary" id="msave">Save this mock</button><button class="btn" id="magain">Run another mock</button></div>
+  </div>
+  <h2>What was in this mock</h2>
+  ${used.map(s=>`<div class="ev"><b>Q${s.q.n}</b> · ${esc(s.q.q)}<div class="position" style="margin-top:6px">${esc(s.q.position)}</div><div class="row" style="margin-top:6px"><a class="btn small" href="#q-${s.q.n}">Review Q${s.q.n}</a><a class="btn small" href="#speak-${s.q.n}">Speak it →</a></div></div>`).join("")}
+  ${us.map(s=>`<div class="ev"><b>Unseen:</b> ${esc(s.u.q)}<details><summary class="note">What a good answer includes</summary><div style="margin-top:6px">${esc(s.u.angle)}</div></details><div class="row" style="margin-top:6px"><a class="btn small" href="#speak-u${s.ui}">Speak it →</a></div></div>`).join("")}`;
+  $("#magain").onclick = () => go();
+  $$(".sc", main).forEach(b => b.onclick = () => { const i=b.dataset.i; scores[i]=+b.dataset.v; $$(`.sc[data-i="${i}"]`, main).forEach(x=>x.classList.toggle("primary", x===b)); });
+  $("#msave").onclick = () => {
+    const h=store.get("mockHistory",[]); const sc={}; RUBRIC.forEach(([n],i)=>sc[n]=scores[i]||0);
+    h.unshift({date:new Date().toLocaleString("en-AU",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}), label:MOCK_CFG[M.cfg.len].label, mode:M.cfg.mode, scores:sc, tally:M.tally, fix:$("#r3").value.trim(), strong:$("#r1").value.trim(), lost:$("#r2").value.trim()});
+    store.set("mockHistory", h.slice(0,30)); toast("Saved"); $("#msave").disabled=true;
+  };
+  mockState=null;
+}
 
 // ---------- FLASHCARDS ----------
 function decks(){
